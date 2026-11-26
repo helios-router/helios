@@ -125,7 +125,7 @@ Not everything goes through a rebuild:
 | `solar-wind.nix` | Solar Wind | ntfy-sh with deny-all access, no sign-ups, 72 hour cache. A setup unit generates a write-only token for the router and a read-only phone login on first boot. Optional Tailscale Funnel unit. |
 | `photosphere.nix` | Photosphere | Installs `helios-ctl` and the Cockpit plugin, enables Cockpit on port 9090 (not opened by NixOS; Heliopause admits admin networks and Tailscale), and the timers for the outage monitor (every 30 seconds) and the nightly backup (03:17). |
 | `voyager.nix` | Voyager | QoS service `helios-sqm` (CAKE or fq_codel plus HTB on `wan`, download shaped through an `ifb4wan` mirror) and miniupnpd for UPnP and NAT-PMP with a deny list. |
-| `hubble.nix` | Hubble | Loads the Intel `iTCO_wdt` watchdog module, runs vnStat for traffic history, sets the hardware watchdog (reboot after 30 seconds of hang, force a stuck shutdown after 10 minutes). |
+| `hubble.nix` | Hubble | Uses whatever hardware watchdog the kernel finds (Intel `iTCO_wdt`, AMD `sp5100_tco`, ACPI `wdat_wdt`, SoC and VM watchdogs load by themselves) and falls back to `softdog` when there is none (`helios-watchdog.service`), runs vnStat for traffic history, sets the hardware watchdog (reboot after 30 seconds of hang, force a stuck shutdown after 10 minutes). |
 | `pioneer.nix` | Pioneer | CUPS shared to networks with `printing`, ipp-usb, printers from `state.json`, Avahi publishing. |
 | `discovery.nix` | Discovery | Optional AI log triage (below). |
 | `rosetta.nix` | Rosetta | Hardware detection timer, LLDP listening, UPS through Network UPS Tools, weekly vulnix scan. |

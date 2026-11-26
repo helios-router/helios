@@ -64,6 +64,8 @@ in
         trunkOnly
       ];
       virtualisation.memorySize = 2048;
+      # A virtual hardware watchdog, so the test sees the "driver loads by itself" path
+      virtualisation.qemu.options = [ "-device i6300esb" ];
       helios.admin.user = lib.mkForce "admin";
       # The test driver names machines by hostName; keep the script's `router`
       helios.hostName = lib.mkForce "router";
@@ -100,6 +102,14 @@ in
         router.succeed("ip link show wan | grep -q 'wan@trunk0'")
         wan_ip = lease(router, "wan", "192.0.2")
         print(f"router WAN lease: {wan_ip}")
+
+    with subtest("watchdog: hardware driver autoloads and systemd uses it"):
+        router.fail("systemctl is-failed --quiet systemd-modules-load.service")
+        router.wait_until_succeeds("test -e /dev/watchdog0", timeout=60)
+        ident = router.succeed("cat /sys/class/watchdog/watchdog0/identity").strip()
+        assert "6300" in ident, f"expected the i6300ESB watchdog, got {ident!r}"
+        router.wait_until_succeeds("grep -qx active /sys/class/watchdog/watchdog0/state", timeout=60)
+        router.fail("lsmod | grep -q '^softdog'")
 
     with subtest("miniupnpd starts first time (waits for the LAN VLANs)"):
         router.wait_for_unit("miniupnpd.service")
