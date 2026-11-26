@@ -57,14 +57,16 @@ let
   };
 in
 lib.mkMerge [
-# Always: a preset can be downloaded before logwatch is switched on. llama-cpp runs as a
-# DynamicUser, so it reads the model through this group (0710 folder, 0640 files), not because
-# the model is world-readable. z only touches what already exists.
+# Always: a preset can be downloaded before logwatch is switched on. llama-cpp runs as this
+# fixed account instead of a DynamicUser, so the models can be its own (0700 folder, 0400
+# files) and nobody else's; ProtectSystem=strict keeps them read-only to it. z only touches
+# what already exists.
 {
+  users.users.llm = { isSystemUser = true; group = "llm"; };
   users.groups.llm = { };
   systemd.tmpfiles.rules = [
-    "z /var/lib/llm 0710 root llm -"
-    "z /var/lib/llm/*.gguf 0640 root llm -"
+    "z /var/lib/llm 0700 llm llm -"
+    "z /var/lib/llm/*.gguf 0400 llm llm -"
   ];
 }
 (lib.mkIf (cfg.internal.on "logwatch") {
@@ -100,7 +102,10 @@ lib.mkMerge [
     wantedBy = lib.mkIf (!st.keepLoaded) (lib.mkForce [ ]);
     serviceConfig = {
       Slice = "helios-ai.slice";
-      SupplementaryGroups = [ "render" "video" "llm" ];   # /dev/dri/renderD128, /var/lib/llm
+      DynamicUser = lib.mkForce false;              # the fixed llm account owns the models
+      User = "llm";
+      Group = "llm";
+      SupplementaryGroups = [ "render" "video" ];   # /dev/dri/renderD128
       CPUQuota = "${toString st.cpuPercent}%";
       Nice = 19;
       OOMScoreAdjust = 900;

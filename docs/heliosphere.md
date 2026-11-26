@@ -101,7 +101,7 @@ Secrets are never stored in state.json or git. They live under `/var/lib/heliosp
 | `tailscale/` | Tailscale state + auth key | rw |
 | `wireguard/private` | server key (generated in the container) | rw |
 | `openvpn/ca/` | CA key and cert, issued-cert index | **not mounted** |
-| `openvpn/server/` | `ca.crt server.crt server.key tls-crypt.key crl.pem`; folder 0710 and `crl.pem` 0640, group `heliosphere-ovpn` (gid 1194), because OpenVPN re-reads the CRL after dropping to `nobody` | ro |
+| `openvpn/server/` | `ca.crt server.crt server.key tls-crypt.key crl.pem`; folder 0700 and `crl.pem` 0400, owned by `heliosphere-ovpn` (uid/gid 1194), the account OpenVPN drops to; it re-reads the CRL after that | ro |
 | `proxy/users` | 3proxy users file, `name:CR:<md5-crypt>` | ro |
 | `egress/` | `wg-out.conf`, `client.ovpn`, `auth.txt`, `proxy.json` | ro |
 

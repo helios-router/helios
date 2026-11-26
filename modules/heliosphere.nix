@@ -34,22 +34,26 @@ let
   ingressIf = { tailscale = "tailscale0"; wireguard = "wg-in"; openvpn = "tun-in"; };
   lanAny = lib.unique (lib.concatMap lanOf [ "tailscale" "wireguard" "openvpn" ]);
   allLans = map netOf cfg.internal.names;
-  ovpnGid = 1194;   # fixed, so host and container agree on who owns crl.pem
+  # OpenVPN's own account, fixed uid/gid so host and container agree on who owns crl.pem
+  ovpnId = 1194;
+  ovpnUser = { isSystemUser = true; uid = ovpnId; group = "heliosphere-ovpn"; };
 in
 lib.mkIf (cfg.internal.on "remote") {
-  # OpenVPN in the container drops to nobody:heliosphere-ovpn and re-reads crl.pem on each new
-  # client, so the server side is 0710/0640 to this group instead of world-readable. Same gid
-  # here and in the container (no user namespace), so the bind mount keeps the group.
-  users.groups.heliosphere-ovpn.gid = ovpnGid;
+  # OpenVPN in the container drops to heliosphere-ovpn and re-reads crl.pem on each new client,
+  # so the CRL and its folder are that account's (0400/0700), not readable by anyone else. It
+  # can't change them: the container mounts the folder read-only. Same uid here and in the
+  # container (no user namespace), so the bind mount keeps the owner.
+  users.users.heliosphere-ovpn = ovpnUser;
+  users.groups.heliosphere-ovpn.gid = ovpnId;
   systemd.tmpfiles.rules = [
     "d ${builtins.dirOf hs.authKeyFile} 0700 root root -"
     "d ${dir} 0755 root root -"
     "d ${dir}/wireguard 0700 root root -"
     "d ${dir}/openvpn 0755 root root -"
     "d ${dir}/openvpn/ca 0700 root root -"
-    "d ${dir}/openvpn/server 0710 root heliosphere-ovpn -"
-    # Routers set up before this got 0644 files; z only touches files that already exist
-    "z ${dir}/openvpn/server/crl.pem 0640 root heliosphere-ovpn -"
+    "d ${dir}/openvpn/server 0700 heliosphere-ovpn heliosphere-ovpn -"
+    # Put modes back if anything (a hand edit, a restore) loosens them; z only touches what exists
+    "z ${dir}/openvpn/server/crl.pem 0400 heliosphere-ovpn heliosphere-ovpn -"
     "z ${dir}/openvpn/server/ca.crt 0600 root root -"
     "z ${dir}/openvpn/server/server.crt 0600 root root -"
     "z ${dir}/openvpn/ca/ca.crt 0600 root root -"
@@ -77,7 +81,8 @@ lib.mkIf (cfg.internal.on "remote") {
 
     config = { lib, pkgs, ... }: {
       system.stateVersion = stateVersion;
-      users.groups.heliosphere-ovpn.gid = ovpnGid;
+      users.users.heliosphere-ovpn = ovpnUser;
+      users.groups.heliosphere-ovpn.gid = ovpnId;
       networking.useHostResolvConf = lib.mkForce false;
       networking.nameservers = [ hostIp ];
       services.resolved.enable = false;
@@ -128,7 +133,7 @@ lib.mkIf (cfg.internal.on "remote") {
             keepalive 10 60
             persist-key
             persist-tun
-            user nobody
+            user heliosphere-ovpn
             group heliosphere-ovpn
             status /run/openvpn-ingress.status 10
           '';
