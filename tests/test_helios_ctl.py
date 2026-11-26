@@ -16,6 +16,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CTL = os.path.join(HERE, "..", "pkgs", "helios-ctl.py")
 STUBS = os.path.join(HERE, "stubs")
 
+
+def read_file(path):
+    with open(path) as f:
+        return f.read()
+
 WG_OUT = """[Interface]
 PrivateKey = abc=
 Address = 10.2.0.2/32
@@ -293,6 +298,7 @@ class HeliosCtl(unittest.TestCase):
         self.assertIn("Change qos settings", self.helios("pending")["changes"])
         for bad, msg in (({"link": "dialup"}, "link must be one of"), ({"down": "fast"}, "rate"), ({"wash": "yes"}, "true or false"),
                          ({"overhead": 999}, "overhead"), ({"nope": 1}, "unknown QoS setting"),
+                         ({"down": "\u0665mbit"}, "rate"),             # fuzzing: \d took other scripts' digits
                          ({"enabled": True, "down": None}, "set both rates")):
             self.assertIn(msg, self.helios("qos-set", json.dumps(bad), ok=False)["error"])
         # Detection without measuring: the modem probe fails here, so Ethernet; no rates suggested
@@ -520,7 +526,8 @@ class HeliosCtl(unittest.TestCase):
         self.assertEqual(json.load(open(notice))["for"], "6.12.95")
         # Window settings: validation, ordering of days, next window
         for bad, msg in (({"rebootWindow": {"days": []}}, "days"), ({"rebootWindow": {"time": "25:00"}}, "time"),
-                         ({"rebootWindow": {"enabled": "yes"}}, "true or false"), ({"nope": 1}, "expected")):
+                         ({"rebootWindow": {"enabled": "yes"}}, "true or false"), ({"nope": 1}, "expected"),
+                         ({"rebootWindow": {"time": "\u0660\u0664:\u0660\u0660"}}, "time")):
             self.assertIn(msg, self.helios("maintenance-set", json.dumps(bad), ok=False)["error"])
         r = self.helios("maintenance-set", json.dumps({"rebootWindow": {"enabled": True, "days": ["sun", "wed"], "time": "04:30"}}))
         self.assertEqual(r["maintenance"]["rebootWindow"]["days"], ["wed", "sun"])
@@ -1443,6 +1450,48 @@ class HeliosCtl(unittest.TestCase):
         self.assertIn("proxy credentials", up("auth", '{"user": "x", "extra": 1}', ok=False)["error"])
         self.assertEqual(sorted(self.helios("remote-egress-clear", "auth")["removed"]), ["auth.txt", "proxy.json"])
         self.assertNotIn("abc=", json.dumps(self.helios("pending")))      # secrets never reach the pending output
+
+    def test_remote_egress_upload_reads_like_openvpn(self):
+        """Regressions found by fuzzing (tests/fuzz): the sanitiser must read a file the way OpenVPN does."""
+        up = lambda kind, text, ok=True: self.helios("remote-egress-upload", kind, stdin=text, ok=ok)
+        stored = lambda: read_file(self.hs("egress", "client.ovpn"))
+        head = "client\nremote vpn.example.com 1194\n"
+        # OpenVPN ends <ca> at the first line STARTING with </ca>, so "</ca>junk" closed it and "up" ran
+        self.assertIn("unexpected", up("openvpn", head + "<ca>\nX\n</ca>junk\nscript-security 2\nup /bin/sh\n</ca>\n", ok=False)["error"])
+        r = up("openvpn", head + "<ca>\nX\n  </ca> trailing\nscript-security 2\nup /bin/sh\n")
+        self.assertEqual(r["removedDirectives"], ["script-security", "up"])
+        self.assertTrue(stored().endswith("<ca>\nX\n</ca>\n"))
+        # OpenVPN reads 256-byte lines: the rest of a longer line arrives as a line of its own
+        self.assertIn("longer than 255", up("openvpn", head + "<ca>\n" + "A" * 255 + "</ca>\nconfig /etc/x\n</ca>\n", ok=False)["error"])
+        self.assertIn("too long once quoted", up("openvpn", head + "verb '" + '"' * 200 + "'\n", ok=False)["error"])
+        # <connection> blocks are options, not data; quoting a tag doesn't hide it
+        self.assertIn("credentials file", up("openvpn", "client\n<connection>\nremote a 1\nhttp-proxy h 8080 /etc/shadow\n</connection>\n", ok=False)["error"])
+        self.assertIn("credentials file", up("openvpn", head + '"<connection>"\nhttp-proxy h 8080 /etc/shadow\n</connection>\n', ok=False)["error"])
+        self.assertIn("inside a <connection>", up("openvpn", "client\n<connection>\nremote a 1\n<ca>\n</connection>\n</ca>\n</connection>\n", ok=False)["error"])
+        r = up("openvpn", "client\n<connection>\nremote a 1 udp\n--up /x\n</connection>\n")
+        self.assertEqual((r["removedDirectives"], stored()), (["up"], "client\n<connection>\nremote a 1 udp\n</connection>\n"))
+        self.assertIn("aren't supported", up("openvpn", head + "<up>\n/bin/sh\n</up>\n", ok=False)["error"])
+        # More directives that load code or name a file
+        for bad in ("iproute /tmp/x", "tmp-dir /etc", "capath /etc", "pkcs11-providers /tmp/p.so", "providers /tmp/evil"):
+            self.assertIn("“", up("openvpn", head + bad + "\n", ok=False)["error"], bad)
+        self.assertEqual(up("openvpn", head + "engine dynamic\nmanagement-hold\nproviders legacy default\n")["removedDirectives"],
+                         ["engine", "management-hold"])
+        self.assertIn("providers legacy default\n", stored())
+        # What is stored is written back the way OpenVPN would read it
+        up("openvpn", head + 'verify-x509-name "C=US, O=Ex" subject # note\n--pull-filter ignore \'route\'\n')
+        self.assertIn('verify-x509-name "C=US, O=Ex" subject\npull-filter ignore route\n', stored())
+        self.assertIn("not an OpenVPN option", up("openvpn", head + "---up x\n", ok=False)["error"])
+        self.assertIn("quotes or backslashes", up("openvpn", head + 'verb "3\n', ok=False)["error"])
+        self.assertIn("control character", up("openvpn", head + "verb 3\x0bup /x\n", ok=False)["error"])
+        # wg-quick reads a line without "=" as a key too
+        r = up("wireguard", WG_OUT.replace("[Peer]", "Table\nPostUp\n[Peer]"))
+        self.assertEqual(r["removedDirectives"], ["dns", "postdown", "postup", "table"])
+        self.assertNotIn("Table", read_file(self.hs("egress", "wg-out.conf")))
+        # Not UTF-8: a clean refusal, not a traceback
+        p = subprocess.run([sys.executable, CTL, "remote-egress-upload", "openvpn"], capture_output=True, env=self.env, input=b"client\n\xff\n")
+        self.assertIn("not UTF-8", json.loads(p.stdout)["error"])
+        self.assertIn("control characters", up("auth", json.dumps({"user": "a", "password": "p\u0000w"}), ok=False)["error"])
+        self.assertIn("control character", up("auth", "alice\nse\x7fcret\n", ok=False)["error"])
 
     def test_remote_status_live_and_failing(self):
         self.helios("remote-set", json.dumps({"ingress": {"wireguard": {"enabled": True}}}))
