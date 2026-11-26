@@ -675,13 +675,15 @@ class HeliosCtl(unittest.TestCase):
         self.assertEqual(v["interfaces"][0]["name"], "wan")
 
     def test_backup_commits_adguard_yaml(self):
-        open(os.path.join(self.fake, "var/lib/AdGuardHome/AdGuardHome.yaml"), "w").write(
-            "http:\n  address: 0.0.0.0:3000\nusers:\n  - name: admin\n    password: $2a$10$secrethashsecrethash\n"
-            "tls:\n  private_key: |-\n    -----BEGIN PRIVATE KEY-----\n    c2VjcmV0\n    -----END PRIVATE KEY-----\n"
-            "  certificate_chain: \"\"\ndns:\n  upstream_dns:\n    - https://me:hunter2@dns.example.com/dns-query\n")
+        with open(os.path.join(self.fake, "var/lib/AdGuardHome/AdGuardHome.yaml"), "w") as f:
+            f.write(
+                "http:\n  address: 0.0.0.0:3000\nusers:\n  - name: admin\n    password: $2a$10$secrethashsecrethash\n"
+                "tls:\n  private_key: |-\n    -----BEGIN PRIVATE KEY-----\n    c2VjcmV0\n    -----END PRIVATE KEY-----\n"
+                "  certificate_chain: \"\"\ndns:\n  upstream_dns:\n    - https://me:hunter2@dns.example.com/dns-query\n")
         r = self.helios("backup")
         self.assertTrue(r["changed"])
-        saved = open(os.path.join(self.cfg, "backups/adguard/AdGuardHome.yaml")).read()
+        with open(os.path.join(self.cfg, "backups/adguard/AdGuardHome.yaml")) as f:
+            saved = f.read()
         for secret in ("secrethash", "PRIVATE KEY", "c2VjcmV0", "hunter2"):
             self.assertNotIn(secret, saved)
         self.assertIn("password: REDACTED", saved)
