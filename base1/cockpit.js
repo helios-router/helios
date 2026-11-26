@@ -33,6 +33,7 @@
   const SCAT = (() => { const x = new XMLHttpRequest(); x.open("GET", "../services.json", false); x.send(); return JSON.parse(x.responseText); })();
   const SVC_DEFAULTS = { notifications: true, vulnScan: true, printing: true, remote: true, logwatch: false };
   let svcOver = {}, svcOver0 = {};
+  let maint = { rebootWindow: { enabled: false, days: ["sun"], time: "04:00" } }, maint0 = JSON.parse(JSON.stringify(maint));
   let lwState = {}, lwState0 = {}, lwFiles = { "model.gguf": 1107409472 }, lwDl = null,
     lwPaused = { since: T0 - 3600, until: T0 + 5 * 3600, reason: "CPU pressure 52%" };
   const svcOn = (id, over = svcOver) => (over[id] ?? SVC_DEFAULTS[id]);
@@ -312,6 +313,7 @@
     for (const [id, m] of Object.entries(SCAT.services)) { const a = svcOn(id, svcOver0), b = svcOn(id);
       if (a !== b) msgs.push(`${b ? "Turn on" : "Turn off"} ${m.label}`); else if ((svcOver0[id] ?? null) !== (svcOver[id] ?? null)) msgs.push(svcOver[id] === undefined ? `${m.label}: follow site.nix` : `${m.label}: pin ${b ? "on" : "off"}`); }
     if (JSON.stringify(lwState0) !== JSON.stringify(lwState)) msgs.push(Object.keys(lwState).length ? "Change AI log triage settings" : "AI log triage: back to defaults");
+    if (JSON.stringify(maint0) !== JSON.stringify(maint)) msgs.push(maint.rebootWindow.enabled ? `Reboot window: ${maint.rebootWindow.days.join(", ")} ${maint.rebootWindow.time}` : "Reboot window off");
     return msgs.concat(remoteChanges());
   }
   const tin = (rate, sent, avg, peak, drops, ecn) => ({ threshold_rate: rate, sent_bytes: sent, sent_packets: Math.round(sent / 900), drops, ecn_mark: ecn, ack_drops: 0, peak_delay_us: peak, avg_delay_us: avg, base_delay_us: 6, sparse_flows: 2, bulk_flows: 1, backlog_bytes: 0 });
@@ -555,14 +557,14 @@
         return { ok: true };
       }
       case "pending": { const c = changes(); return { ok: true, dirty: c.length > 0, changes: c, apply }; }
-      case "discard": lwState = JSON.parse(JSON.stringify(lwState0)); svcOver = { ...svcOver0 }; printing = JSON.parse(JSON.stringify(printing0)); devices.length = 0; committed.forEach(d => devices.push({ ...d })); profiles = JSON.parse(JSON.stringify(profiles0)); networks = JSON.parse(JSON.stringify(networks0)); qos = { ...qos0 }; upnp = { ...upnp0 }; drivers = JSON.parse(JSON.stringify(drivers0)); hardware = JSON.parse(JSON.stringify(hardware0)); remote = JSON.parse(JSON.stringify(remote0)); return { ok: true };
+      case "discard": maint = JSON.parse(JSON.stringify(maint0)); lwState = JSON.parse(JSON.stringify(lwState0)); svcOver = { ...svcOver0 }; printing = JSON.parse(JSON.stringify(printing0)); devices.length = 0; committed.forEach(d => devices.push({ ...d })); profiles = JSON.parse(JSON.stringify(profiles0)); networks = JSON.parse(JSON.stringify(networks0)); qos = { ...qos0 }; upnp = { ...upnp0 }; drivers = JSON.parse(JSON.stringify(drivers0)); hardware = JSON.parse(JSON.stringify(hardware0)); remote = JSON.parse(JSON.stringify(remote0)); return { ok: true };
       case "apply-start": apply = { state: "running", started: t, changes: changes() }; setTimeout(() => { apply = { ...apply, state: "confirm", deadline: T() + 120 }; }, 2500); return { ok: true };
       case "apply-status": return { ok: true, apply: { ...apply, remaining: apply.deadline ? Math.max(0, apply.deadline - T()) : undefined }, log: [
         "[10:41:02] nixos-rebuild switch …", "building the system configuration...", "these 4 derivations will be built:",
         "  /nix/store/9xk2…-kea-dhcp4.conf.drv", "  /nix/store/1mfa…-nftables-rules.drv", "  /nix/store/q8c1…-hosts.drv", "  /nix/store/vz0d…-nixos-system-sol-25.11.drv",
         "activating the configuration...", "setting up /etc...", "reloading the following units: nftables.service", "restarting the following units: kea-dhcp4-server.service",
         ...(apply.state === "confirm" ? ["[10:41:39] Syncing AdGuard client profiles …", "[10:41:39] Magnetosphere (AdGuard): 1 added, 15 updated, 0 removed", "[10:41:39] Applied. Waiting for confirmation (auto-rollback in 120s)."] : [])] };
-      case "confirm": lwState0 = JSON.parse(JSON.stringify(lwState)); svcOver0 = { ...svcOver }; printing0 = JSON.parse(JSON.stringify(printing)); committed = JSON.parse(JSON.stringify(devices)); profiles0 = JSON.parse(JSON.stringify(profiles)); networks0 = JSON.parse(JSON.stringify(networks)); qos0 = { ...qos }; upnp0 = { ...upnp }; drivers0 = JSON.parse(JSON.stringify(drivers)); hardware0 = JSON.parse(JSON.stringify(hardware)); remote0 = JSON.parse(JSON.stringify(remote)); apply = { state: "done" }; return { ok: true };
+      case "confirm": maint0 = JSON.parse(JSON.stringify(maint)); lwState0 = JSON.parse(JSON.stringify(lwState)); svcOver0 = { ...svcOver }; printing0 = JSON.parse(JSON.stringify(printing)); committed = JSON.parse(JSON.stringify(devices)); profiles0 = JSON.parse(JSON.stringify(profiles)); networks0 = JSON.parse(JSON.stringify(networks)); qos0 = { ...qos }; upnp0 = { ...upnp }; drivers0 = JSON.parse(JSON.stringify(drivers)); hardware0 = JSON.parse(JSON.stringify(hardware)); remote0 = JSON.parse(JSON.stringify(remote)); apply = { state: "done" }; return { ok: true };
       case "rollback": apply = { state: "rolledback", message: "Rolled back" }; return { ok: true };
       case "apply-dismiss": apply = {}; return { ok: true };
       case "counters": {
@@ -598,6 +600,16 @@
         lwDl = { preset: rest[0], file: pr.file, bytes: pr.bytes, done: 0, state: "running" }; return { ok: true, started: rest[0] }; }
       case "logwatch-model-remove": delete lwFiles[rest[0]]; return { ok: true };
       case "logwatch-resume": lwPaused = null; return { ok: true };
+      case "reboot-status": {
+        const w = maint.rebootWindow, next = (() => { if (!w.enabled) return null; const [hh, mm] = w.time.split(":").map(Number), d = new Date();
+          for (let i = 0; i < 8; i++) { const x = new Date(d); x.setDate(d.getDate() + i); x.setHours(hh, mm, 0, 0); if (w.days.includes(["sun", "mon", "tue", "wed", "thu", "fri", "sat"][x.getDay()]) && x > d) return Math.floor(x / 1000); } return null; })();
+        return { ok: true, needed: true, reasons: ["kernel", "kernel modules", "boot image"], running: "6.12.93", installed: "6.12.95", maintenance: JSON.parse(JSON.stringify(maint)), nextWindow: next };
+      }
+      case "maintenance-set": { const d = JSON.parse(rest[0]).rebootWindow || {};
+        if (d.days && !d.days.length) return { ok: false, error: "days: one or more of mon, tue, wed, thu, fri, sat, sun" };
+        if (d.time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(d.time)) return { ok: false, error: "time must look like 04:00" };
+        maint = { rebootWindow: { ...maint.rebootWindow, ...d } }; return { ok: true, dirty: true }; }
+      case "reboot": return { ok: true };
       case "services": {
         const active = id => svcOn(id, svcOver0) ? "active" : "inactive";
         return { ok: true, dirty: changes().length > 0,

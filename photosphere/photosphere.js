@@ -451,7 +451,10 @@ function viewOverview(root) {
   const tiles = h("div", { class: "tiles" });
   const chartHost = h("div");
   const left = h("div", { class: "grid" }), right = h("div", { class: "grid" });
-  root.append(tiles, h("div", { class: "grid g-main" }, left, right));
+  const rebootBox = h("div");
+  root.append(rebootBox, tiles, h("div", { class: "grid g-main" }, left, right));
+  const drawReboot = () => api("reboot-status").then(r => rebootBox.replaceChildren(rebootBanner(r, drawReboot))).catch(() => {});
+  drawReboot();
   const liveDown = h("span"), liveUp = h("span");
   let lastSt = null, upsInfo = null;      // upsInfo: {device, info} once `hardware` reports a UPS
 
@@ -561,7 +564,7 @@ function viewDevices(root) {
   root.append(h("section", { class: "card" },
     h("div", { class: "toolbar" }, chipsBox, h("span", { class: "spacer" }), newToggle, search),
     h("div", { class: "table-wrap" }, h("table", {},
-      h("thead", {}, h("tr", {}, h("th", {}, "Device"), h("th", {}, "Network"), h("th", {}, "IP address"),
+      h("thead", {}, h("tr", {}, h("th", { class: "pause-col", "aria-label": "Pause" }), h("th", {}, "Device"), h("th", {}, "Network"), h("th", {}, "IP address"),
         h("th", {}, "MAC"), h("th", {}, "Filtering"), h("th", {}, "Seen"), h("th", { class: "actions" }, ""))),
       body)),
     h("div", { class: "card-foot" }, countEl,
@@ -590,13 +593,14 @@ function viewDevices(root) {
       const v = d.lease_vlan || d.vlan;
       const mismatch = d.known && d.lease_vlan && d.lease_vlan !== d.vlan;
       return h("tr", {},
+        // Pause/resume: its own narrow column right before the name
+        h("td", { class: "pause-col" }, d.known && netInfo(d.vlan).access.internet ? h("button", { class: "btn btn-icon " + (d.blocked ? "btn-resume" : "btn-pause"),
+          title: d.blocked ? `Resume ${d.name}: give it its internet back` : `Pause ${d.name}: cut it off right now (no apply needed)`,
+          "aria-label": d.blocked ? `Resume ${d.name}` : `Pause ${d.name}`, onclick: ev => { ev.stopPropagation(); togglePause(d); } }) : null),
         h("td", {}, h("div", { style: "display:flex;gap:10px;align-items:center" },
           h("span", { class: "dot " + (d.blocked ? "bad" : d.online ? "ok" : "idle"), title: d.blocked ? "Paused" : d.online ? "Online" : "Offline" }),
           h("div", { class: "name-cell" },
             h("div", { class: "primary" }, d.known ? d.name : h("span", { class: "unnamed" }, d.hostname || "Unknown device"),
-              d.known && netInfo(d.vlan).access.internet ? h("button", { class: "btn btn-icon " + (d.blocked ? "btn-resume" : "btn-pause"),
-                title: d.blocked ? `Resume ${d.name}: give it its internet back` : `Pause ${d.name}: cut it off right now (no apply needed)`,
-                "aria-label": d.blocked ? `Resume ${d.name}` : `Pause ${d.name}`, onclick: ev => { ev.stopPropagation(); togglePause(d); } }) : null,
               !d.known ? h("span", { class: "badge new" }, "NEW") : null,
               d.blocked ? h("span", { class: "badge paused" }, "PAUSED") : null,
               d.media ? h("span", { class: "badge media", title: "May reach media servers" }, "Media") : null,
@@ -610,7 +614,7 @@ function viewDevices(root) {
         h("td", { class: "actions" },
           h("button", { class: "btn btn-secondary btn-sm", onclick: () => editDevice(d, devices, load) }, d.known ? "Edit" : "Name it")));
     }));
-    if (!rows.length) body.replaceChildren(h("tr", {}, h("td", { colspan: 7 }, h("div", { class: "empty" }, "No devices match."))));
+    if (!rows.length) body.replaceChildren(h("tr", {}, h("td", { colspan: 8 }, h("div", { class: "empty" }, "No devices match."))));
   };
   const togglePause = d => api("block", d.mac, d.blocked ? "off" : "on").then(r => {
     toast(r.blocked ? `${d.name} paused — internet cut off now` : `${d.name} resumed`);
@@ -2036,6 +2040,46 @@ function serviceOffCard(id, title, pitch, reload) {
       h("span", { class: "muted small" }, `Optional extra${x && x.size ? ` · ${SIZE_TEXT[x.size]}` : ""}. Also under Advanced → Services.`)));
 }
 
+/* ----------------------------------------------------------- Reboots */
+const DAY_LABELS = [["mon", "Mon"], ["tue", "Tue"], ["wed", "Wed"], ["thu", "Thu"], ["fri", "Fri"], ["sat", "Sat"], ["sun", "Sun"]];
+const fmtWhen = t => new Date(t * 1000).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+function rebootNow(r) {
+  return confirmDialog("Reboot the router now?", `Everything on your network loses internet for a minute or two while it restarts${r && r.needed ? ` into kernel ${r.installed}` : ""}.`, "Reboot now", true)
+    .then(ok => ok && api("reboot").then(() => toast("Rebooting — this page reconnects when the router is back")).catch(e => toast(e.message, true)));
+}
+// Overview banner: only when an installed update waits for a reboot
+function rebootBanner(r) {
+  if (!r.needed) return "";
+  return h("div", { class: "alert alert-info", style: "display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:16px" },
+    h("div", { style: "flex:1;min-width:16em" }, h("strong", {}, "Reboot to finish an update. "),
+      r.installed && r.running ? `Kernel ${r.installed} is installed; the router still runs ${r.running}. ` : `Updated ${r.reasons.join(", ")} take effect after a reboot. `,
+      r.nextWindow ? `It reboots by itself ${fmtWhen(r.nextWindow)}.` : "Everything else is already updated."),
+    h("button", { class: "btn btn-primary btn-sm", onclick: () => rebootNow(r) }, "Reboot now"),
+    r.nextWindow ? null : h("a", { class: "btn btn-secondary btn-sm", href: "#advanced", onclick: () => setAdvanced(true) }, "Schedule…"));
+}
+// Advanced: Maintenance card (reboot window)
+function maintenanceCard(r, reload) {
+  const w = { ...r.maintenance.rebootWindow, days: [...r.maintenance.rebootWindow.days] }, err = hwErr();
+  const days = h("div", { class: "net-grid" }, ...DAY_LABELS.map(([k, l]) => h("label", { class: "net-chip" + (w.days.includes(k) ? " on" : "") },
+    h("input", { type: "checkbox", checked: w.days.includes(k), onchange: ev => { const set = new Set(w.days); ev.target.checked ? set.add(k) : set.delete(k);
+      w.days = DAY_LABELS.map(([d]) => d).filter(d => set.has(d)); ev.target.parentElement.classList.toggle("on", ev.target.checked); } }), l)));
+  return card("Maintenance", r.needed ? statusEl("warn", "Reboot needed") : statusEl("ok", "Up to date"),
+    h("dl", { class: "kv" }, h("dt", {}, "Running kernel"), h("dd", { class: "mono" }, r.running || "—"),
+      h("dt", {}, "Installed kernel"), h("dd", { class: "mono" }, r.installed || "—"),
+      h("dt", {}, "Next reboot window"), h("dd", {}, r.nextWindow ? fmtWhen(r.nextWindow) : "None")),
+    h("p", { class: "muted small" }, "Most updates take effect right away. Only a new kernel waits for a reboot. NixOS has no live kernel patching, so a short scheduled reboot is the way to stay current."),
+    err,
+    h("div", { class: "opt" }, h("label", { class: "switch" }, h("input", { type: "checkbox", checked: w.enabled, onchange: ev => { w.enabled = ev.target.checked; } }), h("strong", {}, "Reboot automatically when an update needs it")),
+      h("div", { class: "opt-desc" }, "Only in this window, only if a reboot is needed, never while a change is being applied, and a window missed while the router was off isn't caught up later. You get a notification first.")),
+    h("div", { class: "inline-fields", style: "align-items:flex-end" },
+      h("div", { class: "field" }, h("span", { style: "display:block;font-weight:600;margin-bottom:6px" }, "Days"), days),
+      h("label", { class: "field" }, h("span", {}, "Time"), h("input", { type: "time", value: w.time, oninput: ev => { w.time = ev.target.value; } }))),
+    h("div", { class: "card-actions" },
+      h("button", { class: "btn btn-primary btn-sm", onclick: () => { err.hidden = true;
+        api("maintenance-set", JSON.stringify({ rebootWindow: w })).then(() => hwSaved("Reboot window saved", reload)).catch(e => hwShowErr(err, e)); } }, "Save"),
+      h("button", { class: "btn btn-secondary btn-sm", onclick: () => rebootNow(r) }, "Reboot now")));
+}
+
 /* -------------------------------------------------------------- Printing */
 function viewPrinting(root) {
   let data = null;
@@ -2137,8 +2181,10 @@ function viewAdvanced(root) {
   root.append(h("div", { class: "alert alert-info small" }, "Administration and settings most people never need. Hide this page again with the gear button at the top right."), grid);
   const link = (href, label, ext) => h("a", { href, target: ext ? "_blank" : null, rel: ext ? "noopener noreferrer" : null,
     onclick: ev => { if (!ext && window.cockpit && cockpit.jump) { ev.preventDefault(); cockpit.jump(href.replace(/^\.\./, "")); } } }, label);
-  const svc = h("div"), lw = h("div"), sys = h("div"), bk = h("div"), drv = h("div"), sec = h("div");
-  grid.append(svc, lw, sys, bk, drv, sec);
+  const svc = h("div"), lw = h("div"), mt = h("div"), sys = h("div"), bk = h("div"), drv = h("div"), sec = h("div");
+  grid.append(svc, mt, lw, sys, bk, drv, sec);
+  const loadMt = () => api("reboot-status").then(r => mt.replaceChildren(maintenanceCard(r, loadMt))).catch(e => mt.replaceChildren(h("div", { class: "alert alert-bad" }, e.message)));
+  loadMt();
   const loadLw = () => SERVICES.logwatch && SERVICES.logwatch.enabled
     ? api("logwatch").then(r => {
         lw.replaceChildren(logwatchCard(r, loadLw));
