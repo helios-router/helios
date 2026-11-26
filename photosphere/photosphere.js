@@ -462,7 +462,7 @@ function viewOverview(root) {
   const render = st => {
     lastSt = st;
     $("#head-title").textContent = `HeliOS on ${st.hostname}`; $("#head-sub").textContent = `Up ${fmtDur(st.uptime)}`; document.title = `HeliOS on ${st.hostname}`;
-    const tb = $("#tab-new"); tb.hidden = !st.devices.new; tb.textContent = st.devices.new;
+    const tb = $("#tab-new"); tb.hidden = !st.devices.new; tb.textContent = st.devices.new; syncTabMenu();
     const up = st.uplink.state === "up";
     const online = st.vlans.reduce((a, v) => a + v.clients, 0);
     tiles.replaceChildren(
@@ -562,7 +562,7 @@ function viewDevices(root) {
     h("div", { class: "toolbar" }, chipsBox, h("span", { class: "spacer" }), newToggle, search),
     h("div", { class: "table-wrap" }, h("table", {},
       h("thead", {}, h("tr", {}, h("th", {}, "Device"), h("th", {}, "Network"), h("th", {}, "IP address"),
-        h("th", {}, "MAC"), h("th", {}, "Filtering"), h("th", {}, "Seen"), h("th", { class: "actions" }, "Internet"), h("th", { class: "actions" }, ""))),
+        h("th", {}, "MAC"), h("th", {}, "Filtering"), h("th", {}, "Seen"), h("th", { class: "actions" }, ""))),
       body)),
     h("div", { class: "card-foot" }, countEl,
       h("span", { class: "muted small" }, "Name a device to give it a fixed IP, a filtering profile and a ", h("span", { class: "mono" }, `name.${DOMAIN}`), " address."))));
@@ -594,6 +594,9 @@ function viewDevices(root) {
           h("span", { class: "dot " + (d.blocked ? "bad" : d.online ? "ok" : "idle"), title: d.blocked ? "Paused" : d.online ? "Online" : "Offline" }),
           h("div", { class: "name-cell" },
             h("div", { class: "primary" }, d.known ? d.name : h("span", { class: "unnamed" }, d.hostname || "Unknown device"),
+              d.known && netInfo(d.vlan).access.internet ? h("button", { class: "btn btn-icon " + (d.blocked ? "btn-resume" : "btn-pause"),
+                title: d.blocked ? `Resume ${d.name}: give it its internet back` : `Pause ${d.name}: cut it off right now (no apply needed)`,
+                "aria-label": d.blocked ? `Resume ${d.name}` : `Pause ${d.name}`, onclick: ev => { ev.stopPropagation(); togglePause(d); } }) : null,
               !d.known ? h("span", { class: "badge new" }, "NEW") : null,
               d.blocked ? h("span", { class: "badge paused" }, "PAUSED") : null,
               d.media ? h("span", { class: "badge media", title: "May reach media servers" }, "Media") : null,
@@ -605,12 +608,9 @@ function viewDevices(root) {
         h("td", {}, PROFILES[d.profile] ? PROFILES[d.profile].label : d.profile),
         h("td", { class: "muted small" }, d.online ? "Now" : d.lease_since ? fmtAgo(d.lease_since) : "—"),
         h("td", { class: "actions" },
-          d.known && netInfo(d.vlan).access.internet ? h("button", { class: "btn btn-sm " + (d.blocked ? "btn-resume" : "btn-pause"), title: d.blocked ? "Give this device its internet back" : "Cut this device off right now (no apply needed)",
-            onclick: () => togglePause(d) }, d.blocked ? "Resume" : "Pause") : null),
-        h("td", { class: "actions" },
           h("button", { class: "btn btn-secondary btn-sm", onclick: () => editDevice(d, devices, load) }, d.known ? "Edit" : "Name it")));
     }));
-    if (!rows.length) body.replaceChildren(h("tr", {}, h("td", { colspan: 8 }, h("div", { class: "empty" }, "No devices match."))));
+    if (!rows.length) body.replaceChildren(h("tr", {}, h("td", { colspan: 7 }, h("div", { class: "empty" }, "No devices match."))));
   };
   const togglePause = d => api("block", d.mac, d.blocked ? "off" : "on").then(r => {
     toast(r.blocked ? `${d.name} paused — internet cut off now` : `${d.name} resumed`);
@@ -2185,9 +2185,21 @@ function setAdvanced(on) { try { on ? localStorage.setItem(ADV_KEY, "1") : local
 let SERVICES = {};
 const loadServices = () => api("services").then(r => { SERVICES = Object.fromEntries(r.services.map(x => [x.id, x])); applyAdvanced(); return r; });
 const serviceOff = id => SERVICES[id] && !SERVICES[id].enabled;
+// The phone dropdown mirrors whichever tabs are visible
+function syncTabMenu() {
+  const sel = $("#tab-menu");
+  if (!sel) return;
+  const cur = (location.hash || "#overview").slice(1).split("/")[0];
+  sel.replaceChildren(...[...document.querySelectorAll("#tabs a")].filter(a => !a.hidden).map(a => {
+    const badge = a.querySelector(".tab-badge");
+    const label = a.firstChild.textContent.trim() + (badge && !badge.hidden && badge.textContent ? ` (${badge.textContent})` : "");
+    return h("option", { value: a.dataset.tab, selected: a.dataset.tab === cur }, label);
+  }));
+}
 function applyAdvanced() {
   const on = advancedOn();
   for (const a of document.querySelectorAll("#tabs a[data-adv]")) a.hidden = !on || (a.dataset.svc && serviceOff(a.dataset.svc));
+  syncTabMenu();
   const b = $("#adv-btn");
   b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
   b.title = on ? "Hide advanced settings" : "Show advanced settings";
@@ -2197,6 +2209,8 @@ $("#adv-btn").addEventListener("click", () => {
   const on = !advancedOn(); setAdvanced(on);
   if (!on && ADV_TABS.has(currentTab())) location.hash = "#overview"; else rerender();
 });
+$("#tab-menu").addEventListener("change", ev => { location.hash = "#" + ev.target.value; });
+window.addEventListener("hashchange", syncTabMenu);
 applyAdvanced();
 loadServices().catch(() => {});
 
@@ -2223,7 +2237,7 @@ api("status").then(st => {
   RESERVED = ["heliosphere", ...(st.reservedNames || [])];
   if (st.domain) DOMAIN = st.domain;
   $("#head-title").textContent = `HeliOS on ${st.hostname}`; $("#head-sub").textContent = `Up ${fmtDur(st.uptime)}`; document.title = `HeliOS on ${st.hostname}`;
-  const tb = $("#tab-new"); tb.hidden = !st.devices.new; tb.textContent = st.devices.new;
+  const tb = $("#tab-new"); tb.hidden = !st.devices.new; tb.textContent = st.devices.new; syncTabMenu();
 }).catch(() => {});
 refreshPending();
 loadNetworks().catch(e => toast(e.message, true)).finally(rerender);

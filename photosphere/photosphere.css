@@ -349,3 +349,22 @@ textarea { resize: vertical; }
 .svc-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 14px; margin: 4px 0 14px; }
 .svc-row .svc-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .svc-row .opt-desc { margin-left: 50px; }
+
+/* Header: the brand never shrinks or wraps under the tabs */
+.app-head .brand { flex: none; white-space: nowrap; }
+.app-head .brand > div { min-width: 0; }
+/* Narrow screens and phones: the tab row becomes one dropdown (a native select, so phones show their own picker) */
+.tab-menu { display: none; }
+@media (max-width: 1000px) {
+  .app-head { flex-wrap: wrap; align-items: center; gap: 10px; }
+  .head-right { flex: 1 1 100%; align-items: center; margin-bottom: 10px; }
+  .head-right .tabs { display: none; }
+  .tab-menu, .tab-menu[hidden] { display: block; flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 9px 12px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--card); color: var(--text); }
+  .head-tools { border-left: 0; padding: 0; margin: 0; }
+  .brand { padding-bottom: 0; }
+}
+/* Devices: pause/resume as a small icon button next to the name */
+.btn-icon { min-width: 0 !important; width: 28px; height: 24px; padding: 0; justify-content: center; flex: none; border-radius: 4px; }
+.btn-icon.btn-resume { background: var(--ok-soft); }
+.name-cell .primary { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
