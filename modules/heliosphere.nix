@@ -34,16 +34,38 @@ let
   ingressIf = { tailscale = "tailscale0"; wireguard = "wg-in"; openvpn = "tun-in"; };
   lanAny = lib.unique (lib.concatMap lanOf [ "tailscale" "wireguard" "openvpn" ]);
   allLans = map netOf cfg.internal.names;
+  # OpenVPN's own account, fixed uid/gid so host and container agree on who owns crl.pem
+  ovpnId = 1194;
+  ovpnUser = { isSystemUser = true; uid = ovpnId; group = "heliosphere-ovpn"; };
+  # 3proxy's own account (the NixOS module would use a DynamicUser, which can't read a root file)
+  proxyId = 1195;
+  proxyUser = { isSystemUser = true; uid = proxyId; group = "heliosphere-proxy"; };
 in
 lib.mkIf (cfg.internal.on "remote") {
+  # OpenVPN in the container drops to heliosphere-ovpn and re-reads crl.pem on each new client,
+  # so the CRL and its folder are that account's (0400/0700), not readable by anyone else. It
+  # can't change them: the container mounts the folder read-only. Same uid here and in the
+  # container (no user namespace), so the bind mount keeps the owner.
+  users.users.heliosphere-ovpn = ovpnUser;
+  users.groups.heliosphere-ovpn.gid = ovpnId;
+  # Same for 3proxy and its users file (password hashes): its account's, 0400, mounted read-only
+  users.users.heliosphere-proxy = proxyUser;
+  users.groups.heliosphere-proxy.gid = proxyId;
   systemd.tmpfiles.rules = [
     "d ${builtins.dirOf hs.authKeyFile} 0700 root root -"
     "d ${dir} 0755 root root -"
     "d ${dir}/wireguard 0700 root root -"
     "d ${dir}/openvpn 0755 root root -"
     "d ${dir}/openvpn/ca 0700 root root -"
-    "d ${dir}/openvpn/server 0755 root root -"
-    "d ${dir}/proxy 0700 root root -"
+    "d ${dir}/openvpn/server 0700 heliosphere-ovpn heliosphere-ovpn -"
+    # Put modes back if anything (a hand edit, a restore) loosens them; z only touches what exists
+    "z ${dir}/openvpn/server/crl.pem 0400 heliosphere-ovpn heliosphere-ovpn -"
+    "z ${dir}/openvpn/server/ca.crt 0600 root root -"
+    "z ${dir}/openvpn/server/server.crt 0600 root root -"
+    "z ${dir}/openvpn/ca/ca.crt 0600 root root -"
+    "z ${dir}/wireguard/public 0600 root root -"
+    "d ${dir}/proxy 0700 heliosphere-proxy heliosphere-proxy -"
+    "z ${dir}/proxy/users 0400 heliosphere-proxy heliosphere-proxy -"
     "d ${dir}/egress 0700 root root -"
   ];
   # The container can't load kernel modules itself
@@ -66,6 +88,10 @@ lib.mkIf (cfg.internal.on "remote") {
 
     config = { lib, pkgs, ... }: {
       system.stateVersion = stateVersion;
+      users.users.heliosphere-ovpn = ovpnUser;
+      users.groups.heliosphere-ovpn.gid = ovpnId;
+      users.users.heliosphere-proxy = proxyUser;
+      users.groups.heliosphere-proxy.gid = proxyId;
       networking.useHostResolvConf = lib.mkForce false;
       networking.nameservers = [ hostIp ];
       services.resolved.enable = false;
@@ -90,7 +116,7 @@ lib.mkIf (cfg.internal.on "remote") {
         privateKeyFile = "${dir}/wireguard/private";
         generatePrivateKeyFile = true;
         # helios-ctl reads the public key from here when it writes client configs
-        postSetup = "${pkgs.wireguard-tools}/bin/wg pubkey < ${dir}/wireguard/private > ${dir}/wireguard/public";
+        postSetup = "(umask 077; ${pkgs.wireguard-tools}/bin/wg pubkey < ${dir}/wireguard/private > ${dir}/wireguard/public)";
         peers = map (p: { inherit (p) publicKey name; allowedIPs = [ "${p.ip}/32" ]; }) R.wireguard.peers;
       };
 
@@ -116,8 +142,8 @@ lib.mkIf (cfg.internal.on "remote") {
             keepalive 10 60
             persist-key
             persist-tun
-            user nobody
-            group nogroup
+            user heliosphere-ovpn
+            group heliosphere-ovpn
             status /run/openvpn-ingress.status 10
           '';
         })
@@ -149,6 +175,18 @@ lib.mkIf (cfg.internal.on "remote") {
           bindPort = t.port;
           acl = [ { rule = "allow"; users = R.proxy.users; } ];
         }) [ { type = "socks"; port = R.proxy.socksPort; } { type = "proxy"; port = R.proxy.httpPort; } ];
+      };
+      systemd.services."3proxy".serviceConfig = lib.mkIf R.proxy.enabled {
+        DynamicUser = lib.mkForce false;     # its fixed account owns proxy/users
+        User = "heliosphere-proxy";
+        Group = "heliosphere-proxy";
+        # What DynamicUser implied, kept now that it's off
+        ProtectSystem = "strict";
+        ProtectHome = "read-only";
+        PrivateTmp = true;
+        RemoveIPC = true;
+        NoNewPrivileges = true;
+        RestrictSUIDSGID = true;
       };
 
       # ------------------------------------------------------------ way out

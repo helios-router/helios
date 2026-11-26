@@ -419,9 +419,11 @@ class HeliosCtl(unittest.TestCase):
         self.assertEqual((r["settings"]["model"], r["settings"]["interval"], r["settings"]["guard"]["pauseHours"], r["settings"]["guard"]["cpuPressure"]), ("medium", 30, 2, 40))
         self.assertIn("Change AI log triage settings", self.helios("pending")["changes"])
         for bad, msg in (({"model": "huge"}, "model must be"), ({"interval": 1}, "interval"), ({"backend": "tpu"}, "backend"),
-                         ({"customPath": "../x.gguf"}, "absolute path"), ({"model": "custom"}, "needs customPath"), ({"guard": {"cpuPressure": 0}}, "cpuPressure"),
+                         ({"customPath": "../x.gguf"}, "/var/lib/llm"), ({"customPath": "/tmp/x.gguf"}, "/var/lib/llm"), ({"customPath": "/var/lib/llm/../x.gguf"}, "/var/lib/llm"), ({"customPath": "/var/lib/llm/sub/x.gguf"}, "/var/lib/llm"), ({"customPath": "/var/lib/llm/.x.gguf"}, "/var/lib/llm"), ({"model": "custom"}, "needs customPath"), ({"guard": {"cpuPressure": 0}}, "cpuPressure"),
                          ({"nope": 1}, "unknown setting")):
             self.assertIn(msg, self.helios("logwatch-set", json.dumps(bad), ok=False)["error"])
+        r = self.helios("logwatch-set", json.dumps({"model": "custom", "customPath": "/var/lib/llm/my-model.gguf"}))
+        self.assertEqual(r["settings"]["customPath"], "/var/lib/llm/my-model.gguf")
         self.assertEqual(self.helios("logwatch-reset")["settings"]["model"], "small")
         import importlib.util
         spec = importlib.util.spec_from_file_location("helios_ctl_lw", CTL)
@@ -455,6 +457,8 @@ class HeliosCtl(unittest.TestCase):
         r = json.loads(subprocess.run([sys.executable, CTL, "logwatch-model-get", "t"], capture_output=True, text=True, env=env).stdout)
         self.assertTrue(r["ok"], r)
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "llm/t.gguf")))
+        self.assertEqual(oct(os.stat(os.path.join(self.tmp, "llm/t.gguf")).st_mode & 0o777), "0o400")
+        self.assertEqual(oct(os.stat(os.path.join(self.tmp, "llm")).st_mode & 0o777), "0o700")
         conf["logwatch"]["catalog"]["presets"]["t"]["sha256"] = "0" * 64; json.dump(conf, open(self.conf_path, "w"))
         os.remove(os.path.join(self.tmp, "llm/t.gguf"))
         r = json.loads(subprocess.run([sys.executable, CTL, "logwatch-model-get", "t"], capture_output=True, text=True, env=env).stdout)
@@ -1262,11 +1266,37 @@ class HeliosCtl(unittest.TestCase):
         self.assertEqual(r["previousPublicKey"], "T0xEUFVCX19fX19fX19fX19fX19fX19fX19fX19fX18=")
         self.assertEqual(open(self.hs("wireguard", "public")).read().strip(), r["publicKey"])
         self.assertEqual(os.stat(self.hs("wireguard", "private")).st_mode & 0o777, 0o600)
+        self.assertEqual(os.stat(self.hs("wireguard", "public")).st_mode & 0o777, 0o600)
         # Import: must be a 32-byte base64 key
         self.assertIn("isn't a WireGuard private key", self.helios("remote-wg-import", stdin="not-a-key", ok=False)["error"])
         key = base64.b64encode(bytes(range(32))).decode()
         r = self.helios("remote-wg-import", stdin=key + "\n")
         self.assertEqual(open(self.hs("wireguard", "private")).read().strip(), key)
+
+    def test_give_to_only_as_root_and_only_if_the_account_exists(self):
+        import importlib.util, types
+        from unittest import mock
+        spec = importlib.util.spec_from_file_location("helios_ctl_mod", CTL)
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        f = os.path.join(self.tmp, "crl.pem"); open(f, "w").close()
+        with mock.patch.object(mod.os, "chown") as chown:
+            with mock.patch.object(mod.os, "geteuid", return_value=1000):
+                mod.give_to(f, "heliosphere-ovpn")                       # not root: leave it alone
+            chown.assert_not_called()
+            with mock.patch.object(mod.os, "geteuid", return_value=0), \
+                 mock.patch.object(mod.pwd, "getpwnam", side_effect=KeyError("llm")):
+                mod.give_to(f, "llm")                                    # service off: no account yet
+            chown.assert_not_called()
+            with mock.patch.object(mod.os, "geteuid", return_value=0), \
+                 mock.patch.object(mod.pwd, "getpwnam", return_value=types.SimpleNamespace(pw_uid=1194, pw_gid=1194)):
+                mod.give_to(f, "heliosphere-ovpn")
+            chown.assert_called_once_with(f, 1194, 1194)
+        # hs_write hands the new file over before it replaces the old one (proxy/users → 3proxy)
+        with mock.patch.object(mod, "give_to") as give:
+            mod.hs_write(os.path.join(self.tmp, "p", "users"), "tv:CR:x\n", 0o400, 0o700, "heliosphere-proxy")
+        self.assertEqual(give.call_args.args[1], "heliosphere-proxy")
+        self.assertTrue(os.path.basename(give.call_args.args[0]).startswith(".helios-"))
+        self.assertEqual(oct(os.stat(os.path.join(self.tmp, "p", "users")).st_mode & 0o777), "0o400")
 
     def test_remote_ovpn_add_revoke_with_real_openssl(self):
         if not shutil.which("openssl"):
@@ -1287,8 +1317,11 @@ class HeliosCtl(unittest.TestCase):
         srv = self.hs("openvpn", "server")
         self.assertEqual(sorted(os.listdir(srv)), ["ca.crt", "crl.pem", "server.crt", "server.key", "tls-crypt.key"])
         modes = {fn: oct(os.stat(os.path.join(srv, fn)).st_mode & 0o777) for fn in os.listdir(srv)}
-        self.assertEqual(modes, {"ca.crt": "0o644", "server.crt": "0o644", "crl.pem": "0o644", "server.key": "0o600", "tls-crypt.key": "0o600"})
+        # Owner-only: OpenVPN reads all but the CRL as root; the CRL (and folder) are its own account's
+        self.assertEqual(modes, {"ca.crt": "0o600", "server.crt": "0o600", "crl.pem": "0o400", "server.key": "0o600", "tls-crypt.key": "0o600"})
+        self.assertEqual(oct(os.stat(srv).st_mode & 0o777), "0o700")
         self.assertEqual(oct(os.stat(self.hs("openvpn", "ca")).st_mode & 0o777), "0o700")
+        self.assertEqual(oct(os.stat(self.hs("openvpn", "ca", "ca.crt")).st_mode & 0o777), "0o600")
         ssl = lambda *a: subprocess.run(["openssl", *a], capture_output=True, text=True)
         self.assertEqual(ssl("verify", "-CAfile", os.path.join(w, "ca.crt"), os.path.join(w, "c.crt")).returncode, 0)
         self.assertEqual(ssl("verify", "-CAfile", os.path.join(w, "ca.crt"), srv + "/server.crt").returncode, 0)
@@ -1303,6 +1336,8 @@ class HeliosCtl(unittest.TestCase):
         self.assertNotEqual(r["serial"], r2["serial"])
         self.assertIn("already", self.helios("remote-ovpn-add", "phone", ok=False)["error"])
         self.helios("remote-ovpn-revoke", "laptop")
+        self.assertEqual(oct(os.stat(srv + "/crl.pem").st_mode & 0o777), "0o400")
+        self.assertNotIn("crl.pem.tmp", os.listdir(srv))
         crl = ssl("crl", "-in", srv + "/crl.pem", "-noout", "-text").stdout
         revoked = set(re.findall(r"Serial Number:\s*([0-9A-Fa-f]+)", crl))   # not a substring search: hex shows up in the signature
         self.assertIn(r["serial"].upper(), {x.upper() for x in revoked})
@@ -1326,7 +1361,7 @@ class HeliosCtl(unittest.TestCase):
         os.makedirs(wrap)
         with open(os.path.join(wrap, "openssl"), "w") as f:
             f.write(f'#!/bin/sh\necho "openssl $*" >> "{self.tmp}/argv.log"\nexec {real} "$@"\n')
-        os.chmod(os.path.join(wrap, "openssl"), 0o755)
+        os.chmod(os.path.join(wrap, "openssl"), 0o700)
         self.env["PATH"] = wrap + ":" + self.env["PATH"]
         pw = "correct-horse-battery"
         self.assertIn("16", self.helios("remote-proxy-user", "tv", stdin="short", ok=False)["error"])
@@ -1335,7 +1370,7 @@ class HeliosCtl(unittest.TestCase):
         users = open(self.hs("proxy", "users")).read().splitlines()
         self.assertEqual(len(users), 2)
         self.assertRegex(users[0], r"^tv:CR:\$1\$[./0-9A-Za-z]{1,8}\$[./0-9A-Za-z]{22}$")
-        self.assertEqual(oct(os.stat(self.hs("proxy", "users")).st_mode & 0o777), "0o600")
+        self.assertEqual(oct(os.stat(self.hs("proxy", "users")).st_mode & 0o777), "0o400")   # 3proxy's own account reads it
         h = users[0].split(":", 2)[2]
         chk = subprocess.run([real, "passwd", "-1", "-salt", h.split("$")[2], "-stdin"], input=pw, capture_output=True, text=True)
         self.assertEqual(chk.stdout.strip(), h)

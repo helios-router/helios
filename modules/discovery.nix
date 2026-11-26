@@ -56,7 +56,26 @@ let
     text = builtins.readFile ../pkgs/logwatch.sh;
   };
 in
-lib.mkIf (cfg.internal.on "logwatch") {
+lib.mkMerge [
+# Always: a preset can be downloaded before logwatch is switched on. llama-cpp runs as this
+# fixed account instead of a DynamicUser, so the models can be its own (0700 folder, 0400
+# files) and nobody else's; ProtectSystem=strict keeps them read-only to it. z only touches
+# what already exists.
+{
+  users.users.llm = { isSystemUser = true; group = "llm"; };
+  users.groups.llm = { };
+  systemd.tmpfiles.rules = [
+    "z /var/lib/llm 0700 llm llm -"
+    "z /var/lib/llm/*.gguf 0400 llm llm -"
+  ];
+}
+(lib.mkIf (cfg.internal.on "logwatch") {
+  # helios-ctl only accepts these; this catches a hand-edited state.json
+  assertions = [{
+    assertion = st.model != "custom" || st.customPath == null
+      || builtins.match "/var/lib/llm/[A-Za-z0-9_-][A-Za-z0-9._-]*[.]gguf" st.customPath != null;
+    message = "state.json logwatch: customPath must be a .gguf file directly in /var/lib/llm";
+  }];
   hardware.graphics.enable = lib.mkIf (lw.backend == "vulkan") true;
 
   services.llama-cpp = lib.mkIf local {
@@ -89,6 +108,12 @@ lib.mkIf (cfg.internal.on "logwatch") {
     wantedBy = lib.mkIf (!st.keepLoaded) (lib.mkForce [ ]);
     serviceConfig = {
       Slice = "helios-ai.slice";
+      DynamicUser = lib.mkForce false;              # the fixed llm account owns the models
+      # It only answers logwatch on 127.0.0.1:8090: even a hostile model file can't reach out
+      IPAddressDeny = "any";
+      IPAddressAllow = "localhost";
+      User = "llm";
+      Group = "llm";
       SupplementaryGroups = [ "render" "video" ];   # /dev/dri/renderD128
       CPUQuota = "${toString st.cpuPercent}%";
       Nice = 19;
@@ -146,4 +171,5 @@ lib.mkIf (cfg.internal.on "logwatch") {
     wantedBy = [ "timers.target" ];
     timerConfig = { OnBootSec = "2min"; OnUnitActiveSec = "1min"; AccuracySec = "10s"; };
   };
-}
+})
+]
