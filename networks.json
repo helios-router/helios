@@ -1,0 +1,60 @@
+{
+  "_comment": "Network roles and the default networks. A network in state.json names a role and may override any of its access flags. Read by the Nix modules and (via /etc/helios/config.json) by helios-ctl and Photosphere.",
+  "access": {
+    "admin":    "Manage the router (SSH, Cockpit, AdGuard) and skip the trap",
+    "internet": "Reach the internet",
+    "reach":    "Other networks it may open connections to: \"all\" or a list of names",
+    "filtered": "DNS is forced through Magnetosphere; DoT, DoH and WARP are blocked",
+    "mdns":     "Join mDNS reflection (printer discovery, casting)",
+    "printing": "Use the router's print server",
+    "upnp":     "Devices may open ports with UPnP / NAT-PMP",
+    "cast":     "May reach devices marked \"media\" (TVs) on other networks",
+    "forceNtp": "Hard-coded NTP servers are redirected to the router",
+    "tailnet":  "Advertised to your tailnet as a subnet route"
+  },
+  "roles": {
+    "trusted": {
+      "label": "Trusted", "color": "#257de0", "names": "inner",
+      "desc": "Your own devices and servers — reaches everything",
+      "access": { "admin": true, "internet": true, "reach": "all", "filtered": false, "mdns": true, "printing": true,
+                  "upnp": true, "cast": true, "forceNtp": false, "tailnet": true }
+    },
+    "family": {
+      "label": "Family", "color": "#f47230", "names": "inner",
+      "desc": "Household devices — internet only, filtered per device",
+      "access": { "admin": false, "internet": true, "reach": [], "filtered": true, "mdns": true, "printing": true,
+                  "upnp": true, "cast": true, "forceNtp": false, "tailnet": true }
+    },
+    "iot": {
+      "label": "IoT", "color": "#00b894", "names": "kuiper",
+      "desc": "Gadgets — internet only, isolated from the LAN",
+      "access": { "admin": false, "internet": true, "reach": [], "filtered": true, "mdns": true, "printing": false,
+                  "upnp": false, "cast": false, "forceNtp": true, "tailnet": true }
+    },
+    "guest": {
+      "label": "Guest", "color": "#8e6ad8", "names": "inner",
+      "desc": "Visitors — internet only, nothing else",
+      "access": { "admin": false, "internet": true, "reach": [], "filtered": true, "mdns": false, "printing": false,
+                  "upnp": false, "cast": false, "forceNtp": false, "tailnet": false }
+    },
+    "strict": {
+      "label": "Strict", "color": "#f2a600", "names": "inner",
+      "desc": "Unknown wired ports — maximum filtering",
+      "access": { "admin": false, "internet": true, "reach": [], "filtered": true, "mdns": false, "printing": true,
+                  "upnp": false, "cast": false, "forceNtp": false, "tailnet": false }
+    },
+    "mgmt": {
+      "label": "Mgmt", "color": "#ee7fac", "names": "kuiper",
+      "desc": "Switch and AP admin pages — no internet",
+      "access": { "admin": true, "internet": false, "reach": [], "filtered": false, "mdns": false, "printing": false,
+                  "upnp": false, "cast": false, "forceNtp": false, "tailnet": true }
+    }
+  },
+  "defaults": [
+    { "name": "trusted", "label": "Trusted", "vlan": 20, "prefix": "10.20.0", "ipv6": "0x20", "role": "trusted" },
+    { "name": "family",  "label": "Family",  "vlan": 30, "prefix": "10.30.0", "ipv6": "0x30", "role": "family" },
+    { "name": "iot",     "label": "IoT",     "vlan": 40, "prefix": "10.40.0", "ipv6": null,   "role": "iot" },
+    { "name": "strict",  "label": "Strict",  "vlan": 50, "prefix": "10.50.0", "ipv6": "0x50", "role": "strict" },
+    { "name": "mgmt",    "label": "Mgmt",    "vlan": 99, "prefix": "10.99.0", "ipv6": null,   "role": "mgmt" }
+  ]
+}

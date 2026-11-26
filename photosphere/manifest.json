@@ -1,0 +1,13 @@
+{
+  "version": 0,
+  "requires": { "cockpit": "286" },
+  "menu": {
+    "index": {
+      "label": "HeliOS",
+      "order": 1,
+      "keywords": [
+        { "matches": ["router", "sol", "helios", "photosphere", "devices", "dhcp", "vlan", "qos", "sqm", "upnp", "traffic", "adguard", "rollback"] }
+      ]
+    }
+  }
+}
