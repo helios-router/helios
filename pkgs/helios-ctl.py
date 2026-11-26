@@ -3384,6 +3384,7 @@ HS_OVPN_SUBNET = _HS.get("ovpnSubnet") or "10.62.0"
 HS_RESERVED_PORTS = {22, 53, 67, 123, 443, 2586, 3493, 5353, 9090, 41641}
 HS_SERVER_CN = "heliosphere"
 HS_OVPN_USER = "heliosphere-ovpn"      # OpenVPN drops to this account and re-reads crl.pem as it
+HS_PROXY_USER = "heliosphere-proxy"    # 3proxy runs as this account and reads proxy/users at start
 HS_EGRESS_AUTH_PATH = "/var/lib/heliosphere/egress/auth.txt"      # where the container sees it
 HS_METHODS = {"tailscale": "Tailscale", "wireguard": "WireGuard", "openvpn": "OpenVPN", "proxy": "proxy"}
 HS_MODES = ["direct", "wireguard", "openvpn", "proxy"]
@@ -3416,7 +3417,7 @@ def hs_resolve(s):
     return res
 
 
-def hs_write(path, data, mode=0o600, dirmode=0o755):
+def hs_write(path, data, mode=0o600, dirmode=0o755, owner=None):
     os.makedirs(os.path.dirname(path), mode=dirmode, exist_ok=True)
     # Some of these dirs are writable from inside the container: never follow
     # or reuse a file planted there, always a fresh one of our own
@@ -3425,6 +3426,8 @@ def hs_write(path, data, mode=0o600, dirmode=0o755):
         os.fchmod(fd, mode)
         with os.fdopen(fd, "w") as f:
             f.write(data)
+        if owner:
+            give_to(tmp, owner)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -3952,7 +3955,7 @@ def cmd_remote_proxy_user(a):
         hs = hs_resolve(s)
         hashed = tool(["openssl", "passwd", "-1", "-stdin"], input=pw + "\n").strip()
         lines = [x for x in users_lines() if not x.startswith(a.name + ":")] + [f"{a.name}:CR:{hashed}"]
-        hs_write(hs_path("proxy", "users"), "\n".join(lines) + "\n")
+        hs_write(hs_path("proxy", "users"), "\n".join(lines) + "\n", 0o400, 0o700, HS_PROXY_USER)
         users = hs["ingress"]["proxy"]["users"]
         if a.name not in users:
             users.append(a.name)
@@ -3973,7 +3976,7 @@ def cmd_remote_proxy_user_remove(a):
         px["users"] = [x for x in px["users"] if x != a.name]
         if os.path.exists(hs_path("proxy", "users")):
             lines = [x for x in users_lines() if not x.startswith(a.name + ":")]
-            hs_write(hs_path("proxy", "users"), "".join(x + "\n" for x in lines))
+            hs_write(hs_path("proxy", "users"), "".join(x + "\n" for x in lines), 0o400, 0o700, HS_PROXY_USER)
         s["heliosphere"] = hs
         save_state(s)
     out({"ok": True, "dirty": True})

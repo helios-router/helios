@@ -1289,6 +1289,12 @@ class HeliosCtl(unittest.TestCase):
                  mock.patch.object(mod.pwd, "getpwnam", return_value=types.SimpleNamespace(pw_uid=1194, pw_gid=1194)):
                 mod.give_to(f, "heliosphere-ovpn")
             chown.assert_called_once_with(f, 1194, 1194)
+        # hs_write hands the new file over before it replaces the old one (proxy/users → 3proxy)
+        with mock.patch.object(mod, "give_to") as give:
+            mod.hs_write(os.path.join(self.tmp, "p", "users"), "tv:CR:x\n", 0o400, 0o700, "heliosphere-proxy")
+        self.assertEqual(give.call_args.args[1], "heliosphere-proxy")
+        self.assertTrue(os.path.basename(give.call_args.args[0]).startswith(".helios-"))
+        self.assertEqual(oct(os.stat(os.path.join(self.tmp, "p", "users")).st_mode & 0o777), "0o400")
 
     def test_remote_ovpn_add_revoke_with_real_openssl(self):
         if not shutil.which("openssl"):
@@ -1362,7 +1368,7 @@ class HeliosCtl(unittest.TestCase):
         users = open(self.hs("proxy", "users")).read().splitlines()
         self.assertEqual(len(users), 2)
         self.assertRegex(users[0], r"^tv:CR:\$1\$[./0-9A-Za-z]{1,8}\$[./0-9A-Za-z]{22}$")
-        self.assertEqual(oct(os.stat(self.hs("proxy", "users")).st_mode & 0o777), "0o600")
+        self.assertEqual(oct(os.stat(self.hs("proxy", "users")).st_mode & 0o777), "0o400")   # 3proxy's own account reads it
         h = users[0].split(":", 2)[2]
         chk = subprocess.run([real, "passwd", "-1", "-salt", h.split("$")[2], "-stdin"], input=pw, capture_output=True, text=True)
         self.assertEqual(chk.stdout.strip(), h)
