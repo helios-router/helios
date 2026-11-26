@@ -3896,7 +3896,8 @@ def hs_sign(key_pem, cn, ext):
         with open(csr_f, "w") as f:
             f.write(csr)
         hs_ca("-in", csr_f, "-out", crt_f, "-extensions", ext, "-notext")
-        crt = open(crt_f).read()
+        with open(crt_f) as f:
+            crt = f.read()
     serial = tool(["openssl", "x509", "-noout", "-serial"], input=crt).strip().split("=")[-1].upper()
     return crt, serial
 

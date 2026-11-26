@@ -129,6 +129,12 @@ python3 tests/test_helios_ctl.py     # backend, against stubbed tools and mock A
 tests/demo.sh                        # the web UI against a mock backend at http://127.0.0.1:8765
 ```
 
+## Contributing
+
+Bug reports and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md)
+for how to send a change and what it needs. Notable changes are listed in
+[CHANGELOG.md](CHANGELOG.md).
+
 ## Repository layout
 
 ```
