@@ -585,7 +585,6 @@ def cmd_device_remove(a):
     mac = a.mac.lower()
     with Lock():
         s = load_state()
-        before = len(s["devices"])
         gone = next((x for x in s["devices"] if x["mac"].lower() == mac), None)
         s["devices"] = [x for x in s["devices"] if x["mac"].lower() != mac]
         if gone is None:
@@ -1335,6 +1334,7 @@ def cmd_logwatch(a):
             if fn.endswith(".gguf"):
                 files[fn] = os.path.getsize(os.path.join(LLM_DIR, fn))
     except OSError:
+        # no models directory yet: nothing downloaded
         pass
     budget = max(0, (hw["memoryMB"] - 2048) // 2)
     presets = [{"id": k, **v, "downloaded": files.get(v["file"]) == v["bytes"], "fits": v["ramMB"] <= budget}
@@ -1429,7 +1429,8 @@ def cmd_logwatch_model_get(a):
     if st.get("state") == "running" and st.get("pid") and os.path.exists(f"/proc/{st['pid']}"):
         fail(f"already downloading {st.get('preset')}")
     if os.environ.get("HELIOS_NO_SYSTEMD"):
-        return cmd_logwatch_model_fetch(a)
+        cmd_logwatch_model_fetch(a)
+        return
     r = run(["systemd-run", "--unit", "helios-model-download", "--collect", "--property=Slice=helios-ai.slice",
              "--property=Nice=19", os.environ.get("HELIOS_SELF", sys.argv[0]), "logwatch-model-fetch", a.preset])
     if r.returncode != 0:
@@ -1470,6 +1471,7 @@ def cmd_logwatch_model_fetch(a):
         try:
             os.remove(tmp)
         except OSError:
+            # best effort: the temp file may not exist
             pass
         status.update(state="failed", error=str(e)[:200], finished=now())
     write_json(LW_DOWNLOAD, status)
@@ -1524,6 +1526,7 @@ def cmd_logwatch_resume(a):
     try:
         os.remove(p(LW_PAUSE))
     except FileNotFoundError:
+        # not paused
         pass
     out({"ok": True})
 
@@ -2398,8 +2401,10 @@ def read_outages():
                 try:
                     res.append(json.loads(line))
                 except ValueError:
+                    # skip a corrupt line
                     pass
     except OSError:
+        # no outages recorded yet
         pass
     return res
 
@@ -3471,6 +3476,7 @@ def hs_write(path, data, mode=0o600, dirmode=0o755, owner=None):
         try:
             os.unlink(tmp)
         except OSError:
+            # best effort: re-raise the real error below
             pass
         raise
 
@@ -3681,6 +3687,7 @@ def hs_status(hs):
                 try:
                     live[f[0]] = {"lastHandshake": int(f[4]) or None, "rx": int(f[5]), "tx": int(f[6])}
                 except ValueError:
+                    # a line we don't understand: no live data for it
                     pass
     peers = []
     for pr in hs["ingress"]["wireguard"]["peers"]:
@@ -4260,6 +4267,7 @@ def cmd_remote_egress_clear(a):
             os.unlink(hs_path("egress", f))
             removed.append(f)
         except OSError:
+            # already gone
             pass
     out({"ok": True, "removed": removed})
 
