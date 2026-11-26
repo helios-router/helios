@@ -206,7 +206,7 @@ def read_json(path, default=None):
 
 
 def give_group(path, group):
-    """Hand a root-owned file or folder to a service's group, so it can be 0640/0750 instead of
+    """Hand a root-owned file or folder to a service's group, so it can be 0640/0710 instead of
     world-readable. Only root can do it; if the group doesn't exist yet (that service is off),
     the file stays root's and the module's tmpfiles rules fix it up when the service is enabled."""
     if os.geteuid() != 0:
@@ -1409,7 +1409,7 @@ def cmd_logwatch_model_get(a):
     pr = LW_CATALOG.get("presets", {}).get(a.preset)
     if not pr:
         fail(f"no preset {a.preset!r}")
-    os.makedirs(LLM_DIR, mode=0o750, exist_ok=True)
+    os.makedirs(LLM_DIR, mode=0o710, exist_ok=True)        # llama-cpp's group may pass through, not list
     give_group(LLM_DIR, LLM_GROUP)
     free = shutil.disk_usage(LLM_DIR).free
     if free < pr["bytes"] + 512 * 2**20:
@@ -3842,8 +3842,8 @@ def hs_pki_init():
     for dpath in (ca, os.path.join(ca, "newcerts")):
         os.makedirs(dpath, mode=0o700, exist_ok=True)
     os.chmod(ca, 0o700)
-    os.makedirs(srv, mode=0o750, exist_ok=True)
-    os.chmod(srv, 0o750)
+    os.makedirs(srv, mode=0o710, exist_ok=True)            # OpenVPN's group only passes through to crl.pem
+    os.chmod(srv, 0o710)
     give_group(srv, HS_OVPN_GROUP)
     hs_write(hs_ca_dir("openssl.cnf"), hs_ca_cnf(), 0o600, 0o700)
     for name, content in (("index.txt", ""), ("serial", "01\n"), ("crlnumber", "01\n")):

@@ -58,12 +58,12 @@ let
 in
 lib.mkMerge [
 # Always: a preset can be downloaded before logwatch is switched on. llama-cpp runs as a
-# DynamicUser, so it reads the model through this group (0750 folder, 0640 files), not because
+# DynamicUser, so it reads the model through this group (0710 folder, 0640 files), not because
 # the model is world-readable. z only touches what already exists.
 {
   users.groups.llm = { };
   systemd.tmpfiles.rules = [
-    "z /var/lib/llm 0750 root llm -"
+    "z /var/lib/llm 0710 root llm -"
     "z /var/lib/llm/*.gguf 0640 root llm -"
   ];
 }

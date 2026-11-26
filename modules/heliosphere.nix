@@ -38,7 +38,7 @@ let
 in
 lib.mkIf (cfg.internal.on "remote") {
   # OpenVPN in the container drops to nobody:heliosphere-ovpn and re-reads crl.pem on each new
-  # client, so the server side is 0750/0640 to this group instead of world-readable. Same gid
+  # client, so the server side is 0710/0640 to this group instead of world-readable. Same gid
   # here and in the container (no user namespace), so the bind mount keeps the group.
   users.groups.heliosphere-ovpn.gid = ovpnGid;
   systemd.tmpfiles.rules = [
@@ -47,7 +47,7 @@ lib.mkIf (cfg.internal.on "remote") {
     "d ${dir}/wireguard 0700 root root -"
     "d ${dir}/openvpn 0755 root root -"
     "d ${dir}/openvpn/ca 0700 root root -"
-    "d ${dir}/openvpn/server 0750 root heliosphere-ovpn -"
+    "d ${dir}/openvpn/server 0710 root heliosphere-ovpn -"
     # Routers set up before this got 0644 files; z only touches files that already exist
     "z ${dir}/openvpn/server/crl.pem 0640 root heliosphere-ovpn -"
     "z ${dir}/openvpn/server/ca.crt 0600 root root -"

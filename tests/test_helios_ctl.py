@@ -456,7 +456,7 @@ class HeliosCtl(unittest.TestCase):
         self.assertTrue(r["ok"], r)
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "llm/t.gguf")))
         self.assertEqual(oct(os.stat(os.path.join(self.tmp, "llm/t.gguf")).st_mode & 0o777), "0o640")
-        self.assertEqual(oct(os.stat(os.path.join(self.tmp, "llm")).st_mode & 0o777), "0o750")
+        self.assertEqual(oct(os.stat(os.path.join(self.tmp, "llm")).st_mode & 0o777), "0o710")
         conf["logwatch"]["catalog"]["presets"]["t"]["sha256"] = "0" * 64; json.dump(conf, open(self.conf_path, "w"))
         os.remove(os.path.join(self.tmp, "llm/t.gguf"))
         r = json.loads(subprocess.run([sys.executable, CTL, "logwatch-model-get", "t"], capture_output=True, text=True, env=env).stdout)
@@ -1307,7 +1307,7 @@ class HeliosCtl(unittest.TestCase):
         modes = {fn: oct(os.stat(os.path.join(srv, fn)).st_mode & 0o777) for fn in os.listdir(srv)}
         # Nothing world-readable: OpenVPN reads all but the CRL as root; the CRL is for its group
         self.assertEqual(modes, {"ca.crt": "0o600", "server.crt": "0o600", "crl.pem": "0o640", "server.key": "0o600", "tls-crypt.key": "0o600"})
-        self.assertEqual(oct(os.stat(srv).st_mode & 0o777), "0o750")
+        self.assertEqual(oct(os.stat(srv).st_mode & 0o777), "0o710")
         self.assertEqual(oct(os.stat(self.hs("openvpn", "ca")).st_mode & 0o777), "0o700")
         self.assertEqual(oct(os.stat(self.hs("openvpn", "ca", "ca.crt")).st_mode & 0o777), "0o600")
         ssl = lambda *a: subprocess.run(["openssl", *a], capture_output=True, text=True)
