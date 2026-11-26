@@ -212,7 +212,7 @@ Overrides of the defaults in `pkgs/logwatch-models.json`.
 
 | Field | Default | Allowed |
 |---|---|---|
-| `model` | `small` | a preset id, `custom` (needs `customPath`, an absolute `.gguf` path) or `site` |
+| `model` | `small` | a preset id, `custom` (needs `customPath`, a `.gguf` file directly in `/var/lib/llm`, so only root can replace it) or `site` |
 | `backend` | `site` | `site`, `vulkan`, `cpu`, `remote` |
 | `interval` | `10` | minutes, 5 to 240 |
 | `keepLoaded` | `false` | keep the model in memory between runs |
@@ -307,4 +307,4 @@ Photosphere recommends the largest preset whose RAM need fits in half of (RAM mi
 | `/var/lib/helios/solarwind-token`, `solarwind.env` | Generated on first boot; never in the Nix store. |
 | `/var/lib/helios/apply.json`, `apply.log` | State and log of the current apply. |
 | `/var/lib/heliosphere/` | Remote access secrets and PKI. |
-| `/var/lib/llm/` | Downloaded log triage models. |
+| `/var/lib/llm/` | Downloaded log triage models (folder 0700, files 0400, owned by `llm`, the account llama-cpp runs as). |

@@ -21,6 +21,7 @@ import fcntl
 import ipaddress
 import json
 import os
+import pwd
 import re
 import secrets
 import shlex
@@ -202,6 +203,19 @@ def read_json(path, default=None):
             return json.load(f)
     except (OSError, ValueError):
         return default
+
+
+def give_to(path, user):
+    """Hand a file or folder to the one service account that reads it, so it can be 0400/0700
+    instead of readable by a group or everyone. Only root can do it; if the account doesn't exist
+    yet (that service is off), it stays root's and the module's tmpfiles rules fix it up later."""
+    if os.geteuid() != 0:
+        return
+    try:
+        pw = pwd.getpwnam(user)
+    except KeyError:
+        return
+    os.chown(path, pw.pw_uid, pw.pw_gid)
 
 
 def write_json(path, obj):
@@ -1265,6 +1279,7 @@ def _lw_catalog():
 
 LW_CATALOG = _lw_catalog()
 LLM_DIR = os.environ.get("HELIOS_LLM_DIR", "/var/lib/llm")
+LLM_USER = "llm"                   # llama-cpp runs as this account (read-only view of the system)
 LW_PAUSE = os.path.join(DATA_DIR, "logwatch-pause.json")
 LW_DOWNLOAD = os.path.join(DATA_DIR, "logwatch-download.json")
 LW_BACKENDS = ("site", "vulkan", "cpu", "remote")
@@ -1349,8 +1364,10 @@ def cmd_logwatch_set(a):
             if v not in list(LW_CATALOG.get("presets", {})) + ["custom", "site"]:
                 fail("model must be a preset, custom or site")
         elif k == "customPath":
-            if v is not None and (not isinstance(v, str) or ".." in v or not re.fullmatch(r"/[A-Za-z0-9._/-]+\.gguf", v)):
-                fail("customPath must be an absolute path to a .gguf file")
+            # Only root can write /var/lib/llm (and the llm account only reads it), so a model
+            # there can't be swapped by anyone else; a path elsewhere could be
+            if v is not None and (not isinstance(v, str) or not re.fullmatch(r"/var/lib/llm/[A-Za-z0-9_-][A-Za-z0-9._-]*\.gguf", v)):
+                fail("customPath must be a .gguf file directly in /var/lib/llm, like /var/lib/llm/my-model.gguf")
         elif k == "backend":
             if v not in LW_BACKENDS:
                 fail(f"backend must be one of {', '.join(LW_BACKENDS)}")
@@ -1403,7 +1420,8 @@ def cmd_logwatch_model_get(a):
     pr = LW_CATALOG.get("presets", {}).get(a.preset)
     if not pr:
         fail(f"no preset {a.preset!r}")
-    os.makedirs(LLM_DIR, exist_ok=True)
+    os.makedirs(LLM_DIR, mode=0o700, exist_ok=True)
+    give_to(LLM_DIR, LLM_USER)
     free = shutil.disk_usage(LLM_DIR).free
     if free < pr["bytes"] + 512 * 2**20:
         fail(f"not enough space in {LLM_DIR}: needs {pr['bytes'] // 2**20} MB, {free // 2**20} MB free")
@@ -1444,7 +1462,8 @@ def cmd_logwatch_model_fetch(a):
                     last = now()
         if h.hexdigest() != pr["sha256"]:
             raise RuntimeError("checksum mismatch: the file isn't the published model; deleted it")
-        os.chmod(tmp, 0o644)
+        os.chmod(tmp, 0o400)
+        give_to(tmp, LLM_USER)
         os.replace(tmp, dest)
         status.update(state="done", finished=now())
     except Exception as e:  # noqa: BLE001
@@ -3366,6 +3385,8 @@ HS_WG_SUBNET = _HS.get("wgSubnet") or "10.61.0"
 HS_OVPN_SUBNET = _HS.get("ovpnSubnet") or "10.62.0"
 HS_RESERVED_PORTS = {22, 53, 67, 123, 443, 2586, 3493, 5353, 9090, 41641}
 HS_SERVER_CN = "heliosphere"
+HS_OVPN_USER = "heliosphere-ovpn"      # OpenVPN drops to this account and re-reads crl.pem as it
+HS_PROXY_USER = "heliosphere-proxy"    # 3proxy runs as this account and reads proxy/users at start
 HS_EGRESS_AUTH_PATH = "/var/lib/heliosphere/egress/auth.txt"      # where the container sees it
 HS_METHODS = {"tailscale": "Tailscale", "wireguard": "WireGuard", "openvpn": "OpenVPN", "proxy": "proxy"}
 HS_MODES = ["direct", "wireguard", "openvpn", "proxy"]
@@ -3398,7 +3419,7 @@ def hs_resolve(s):
     return res
 
 
-def hs_write(path, data, mode=0o600, dirmode=0o755):
+def hs_write(path, data, mode=0o600, dirmode=0o755, owner=None):
     os.makedirs(os.path.dirname(path), mode=dirmode, exist_ok=True)
     # Some of these dirs are writable from inside the container: never follow
     # or reuse a file planted there, always a fresh one of our own
@@ -3407,6 +3428,8 @@ def hs_write(path, data, mode=0o600, dirmode=0o755):
         os.fchmod(fd, mode)
         with os.fdopen(fd, "w") as f:
             f.write(data)
+        if owner:
+            give_to(tmp, owner)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -3740,7 +3763,7 @@ def hs_wg_set_server_key(priv):
     pub = tool(["wg", "pubkey"], input=priv + "\n").strip()
     old = hs_server_public_key()
     hs_write(hs_path("wireguard", "private"), priv + "\n", 0o600, 0o700)
-    hs_write(hs_path("wireguard", "public"), pub + "\n", 0o644, 0o700)
+    hs_write(hs_path("wireguard", "public"), pub + "\n", 0o600, 0o700)
     restarted = hs_exec("systemctl", "restart", "wireguard-wg-in.service", timeout=30) is not None
     return {"ok": True, "publicKey": pub, "previousPublicKey": old, "restarted": restarted}
 
@@ -3836,8 +3859,13 @@ def hs_sign(key_pem, cn, ext):
 
 
 def hs_gen_crl():
-    hs_ca("-gencrl", "-out", hs_path("openvpn", "server", "crl.pem"))
-    os.chmod(hs_path("openvpn", "server", "crl.pem"), 0o644)
+    """OpenVPN re-reads the CRL after dropping privileges, so it's 0400 and HS_OVPN_USER's (built
+    beside the live one and swapped in, so a handshake never sees a half-written CRL)."""
+    crl = hs_path("openvpn", "server", "crl.pem")
+    hs_ca("-gencrl", "-out", crl + ".tmp")
+    os.chmod(crl + ".tmp", 0o400)
+    give_to(crl + ".tmp", HS_OVPN_USER)
+    os.replace(crl + ".tmp", crl)
 
 
 def hs_pki_init():
@@ -3847,8 +3875,9 @@ def hs_pki_init():
     for dpath in (ca, os.path.join(ca, "newcerts")):
         os.makedirs(dpath, mode=0o700, exist_ok=True)
     os.chmod(ca, 0o700)
-    os.makedirs(srv, mode=0o755, exist_ok=True)
-    os.chmod(srv, 0o755)
+    os.makedirs(srv, mode=0o700, exist_ok=True)            # the container mounts it read-only
+    os.chmod(srv, 0o700)
+    give_to(srv, HS_OVPN_USER)
     hs_write(hs_ca_dir("openssl.cnf"), hs_ca_cnf(), 0o600, 0o700)
     for name, content in (("index.txt", ""), ("serial", "01\n"), ("crlnumber", "01\n")):
         if not os.path.exists(hs_ca_dir(name)):
@@ -3857,12 +3886,13 @@ def hs_pki_init():
     hs_write(hs_ca_dir("ca.key"), ca_key, 0o600, 0o700)
     tool(["openssl", "req", "-new", "-x509", "-key", hs_ca_dir("ca.key"), "-config", hs_ca_dir("openssl.cnf"),
           "-extensions", "v3_ca", "-days", "3650", "-out", hs_ca_dir("ca.crt")])
-    os.chmod(hs_ca_dir("ca.crt"), 0o644)
+    os.chmod(hs_ca_dir("ca.crt"), 0o600)
     key = tool(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256"])
     crt, _ = hs_sign(key, HS_SERVER_CN, "v3_server")
     hs_write(os.path.join(srv, "server.key"), key, 0o600)
-    hs_write(os.path.join(srv, "server.crt"), crt, 0o644)
-    hs_write(os.path.join(srv, "ca.crt"), read_plain(hs_ca_dir("ca.crt")), 0o644)
+    # OpenVPN reads these (and server.key) as root before it drops privileges; persist-key keeps them
+    hs_write(os.path.join(srv, "server.crt"), crt, 0o600)
+    hs_write(os.path.join(srv, "ca.crt"), read_plain(hs_ca_dir("ca.crt")), 0o600)
     tlsf = os.path.join(srv, "tls-crypt.key")
     tool(["openvpn", "--genkey", "secret", tlsf])
     os.chmod(tlsf, 0o600)
@@ -3927,7 +3957,7 @@ def cmd_remote_proxy_user(a):
         hs = hs_resolve(s)
         hashed = tool(["openssl", "passwd", "-1", "-stdin"], input=pw + "\n").strip()
         lines = [x for x in users_lines() if not x.startswith(a.name + ":")] + [f"{a.name}:CR:{hashed}"]
-        hs_write(hs_path("proxy", "users"), "\n".join(lines) + "\n")
+        hs_write(hs_path("proxy", "users"), "\n".join(lines) + "\n", 0o400, 0o700, HS_PROXY_USER)
         users = hs["ingress"]["proxy"]["users"]
         if a.name not in users:
             users.append(a.name)
@@ -3948,7 +3978,7 @@ def cmd_remote_proxy_user_remove(a):
         px["users"] = [x for x in px["users"] if x != a.name]
         if os.path.exists(hs_path("proxy", "users")):
             lines = [x for x in users_lines() if not x.startswith(a.name + ":")]
-            hs_write(hs_path("proxy", "users"), "".join(x + "\n" for x in lines))
+            hs_write(hs_path("proxy", "users"), "".join(x + "\n" for x in lines), 0o400, 0o700, HS_PROXY_USER)
         s["heliosphere"] = hs
         save_state(s)
     out({"ok": True, "dirty": True})
