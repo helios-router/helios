@@ -123,7 +123,7 @@ helios-ctl, returned **once** in the command's output, and never stored.
 | `remote-ovpn-revoke <name>` | revoke the cert and regenerate `crl.pem` |
 | `remote-proxy-user <name>` | password on stdin (≥ 16 chars) → users file; name added to `proxy.users` |
 | `remote-proxy-user-remove <name>` | remove the user |
-| `remote-egress-upload <wireguard\|openvpn\|auth>` | config on stdin. Validated, and cleaned of `DNS=`, `PostUp/PreUp/PostDown/PreDown`, `up`/`down`/`script-security` and other hook lines; then stored |
+| `remote-egress-upload <wireguard\|openvpn\|auth>` | config on stdin (UTF-8, no control characters). Validated, and cleaned of `DNS=`, `PostUp/PreUp/PostDown/PreDown`, `Table`, `up`/`down`/`script-security`, `engine` and other hook lines; OpenVPN directives that name a file or load code (`ca /path`, `config`, `iproute`, `tmp-dir`, `pkcs11-providers`…) are refused. OpenVPN files are read the way OpenVPN reads them (lines of at most 255 bytes, its quoting, inline blocks ending at a line starting with `</tag>`) and stored canonically quoted. Fuzzed in CI: [tests/fuzz](../tests/fuzz/README.md) |
 | `remote-egress-clear <kind>` | delete that file |
 
 Every state change shows in the pending banner and applies with
