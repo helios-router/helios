@@ -615,9 +615,11 @@ class HeliosCtl(unittest.TestCase):
         self.assertTrue(r["live"])
         self.assertFalse(r["dirty"])
         self.assertIn("nft add element inet heliopause cutoff { 10.30.0.20 }", self.stub_log())
+        self.assertIn("nft add element inet heliopause cutoff_mac { aa:aa:aa:00:00:01 }", self.stub_log())
         self.assertEqual(self.helios("history")["commits"][0]["subject"], "Pause ceres")
         self.helios("block", "aa:aa:aa:00:00:01", "off")
         self.assertIn("nft delete element inet heliopause cutoff { 10.30.0.20 }", self.stub_log())
+        self.assertIn("nft delete element inet heliopause cutoff_mac { aa:aa:aa:00:00:01 }", self.stub_log())
         # unknown device can't be paused before adoption
         self.assertIn("adopt", self.helios("block", "bb:bb:bb:00:00:02", "on", ok=False)["error"])
 
@@ -1140,6 +1142,8 @@ class HeliosCtl(unittest.TestCase):
         bad({"egress": {"mode": "tor"}}, "egress.mode")
         bad({"egress": {"proxy": {"type": "ftp", "host": "a.b", "port": 1}}}, "socks5 or http")
         bad({"egress": {"proxy": {"type": "socks5", "host": "bad host!", "port": 1}}}, "host name")
+        bad({"egress": {"proxy": {"type": "socks5", "host": "fe80::1%$(reboot)", "port": 1}}}, "host name")
+        bad({"egress": {"proxy": {"type": "socks5", "host": "proxy.example.net\n", "port": 1}}}, "host name")
         bad({"egress": {"proxy": {"type": "socks5", "host": "a.b", "port": 99999}}}, "1 to 65535")
         bad({"egress": {"proxy": {"type": "socks5", "host": "a.b", "port": 1, "user": "x"}}}, "type, host and port")
         bad({"egress": {"killswitch": 1}}, "true or false")
@@ -1173,13 +1177,13 @@ class HeliosCtl(unittest.TestCase):
     def test_remote_wg_add_remove(self):
         self.assertIn("hasn't started WireGuard", self.helios("remote-wg-add", "pixel", ok=False)["error"])
         os.makedirs(self.hs("wireguard"))
-        open(self.hs("wireguard", "public"), "w").write("SERVERPUB=\n")
+        open(self.hs("wireguard", "public"), "w").write("U0VSVkVSUFVCX19fX19fX19fX19fX19fX19fX19fX18=\n")
         r = self.helios("remote-wg-add", "pixel")
         self.assertEqual(r["ip"], "10.61.0.2")
         cfg = r["config"]
         self.assertIn("PrivateKey = cHJpdmF0ZWtleS1mb3ItdGVzdHMtb25seS0wMDAwMDA=", cfg)
         self.assertIn("Address = 10.61.0.2/32\nDNS = 10.60.0.1", cfg)
-        self.assertIn("PublicKey = SERVERPUB=", cfg)
+        self.assertIn("PublicKey = U0VSVkVSUFVCX19fX19fX19fX19fX19fX19fX19fX18=", cfg)
         self.assertIn("Endpoint = 98.42.17.201:51820", cfg)
         self.assertIn("AllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25", cfg)
         self.assertIn("<svg", r["qrSvg"])
@@ -1199,7 +1203,7 @@ class HeliosCtl(unittest.TestCase):
         self.assertNotIn("cHJpdmF0ZWtleS", blob)
         peers = json.load(open(os.path.join(self.cfg, "state.json")))["heliosphere"]["ingress"]["wireguard"]["peers"]
         self.assertEqual([x["name"] for x in peers], ["tablet", "again"])
-        self.assertTrue(peers[0]["publicKey"].startswith("pub-of-"))
+        self.assertTrue(base64.b64decode(peers[0]["publicKey"]).startswith(b"pub-of-"))
         self.assertIn("Remote access: add WireGuard peer tablet", self.helios("pending")["changes"])
 
     def test_remote_wg_endpoint_uses_public_host(self):
@@ -1210,7 +1214,7 @@ class HeliosCtl(unittest.TestCase):
         open(self.hs("wireguard", "private"), "w").write("priv\n")                 # public derived through `wg pubkey`
         r = self.helios("remote-wg-add", "pixel")
         self.assertIn("Endpoint = vpn.example.org:51820", r["config"])
-        self.assertIn("PublicKey = pub-of-priv", r["config"])
+        self.assertIn("PublicKey = " + base64.b64encode(b"pub-of-priv".ljust(32)).decode(), r["config"])
         self.assertNotIn("endpointWarning", r)
 
     def test_remote_lan_tailscale_and_wireguard_options(self):
@@ -1233,7 +1237,7 @@ class HeliosCtl(unittest.TestCase):
             self.assertIn(msg, self.helios("remote-set", json.dumps({"ingress": bad}), ok=False)["error"])
         # Split tunnel: only the chosen home networks + the router's DNS; no keepalive line when 0; MTU set
         os.makedirs(self.hs("wireguard"))
-        open(self.hs("wireguard", "public"), "w").write("SERVERPUB=\n")
+        open(self.hs("wireguard", "public"), "w").write("U0VSVkVSUFVCX19fX19fX19fX19fX19fX19fX19fX18=\n")
         cfg = self.helios("remote-wg-add", "pixel")["config"]
         self.assertIn("AllowedIPs = 10.20.0.0/24, 10.60.0.1/32", cfg)
         self.assertIn("MTU = 1380", cfg)
@@ -1241,7 +1245,7 @@ class HeliosCtl(unittest.TestCase):
 
     def test_remote_wg_server_key_and_renew(self):
         os.makedirs(self.hs("wireguard"))
-        open(self.hs("wireguard", "public"), "w").write("OLDPUB=\n")
+        open(self.hs("wireguard", "public"), "w").write("T0xEUFVCX19fX19fX19fX19fX19fX19fX19fX19fX18=\n")
         old = self.helios("remote-wg-add", "pixel")
         # Renew: same address, new key pair, a change in the pending list; unknown peer refused
         st0 = json.load(open(os.path.join(self.cfg, "state.json")))
@@ -1255,7 +1259,7 @@ class HeliosCtl(unittest.TestCase):
         self.assertIn("no WireGuard peer", self.helios("remote-wg-renew", "ghost", ok=False)["error"])
         # Rotate: new private + public key files, previous key reported; files private
         r = self.helios("remote-wg-rotate")
-        self.assertEqual(r["previousPublicKey"], "OLDPUB=")
+        self.assertEqual(r["previousPublicKey"], "T0xEUFVCX19fX19fX19fX19fX19fX19fX19fX19fX18=")
         self.assertEqual(open(self.hs("wireguard", "public")).read().strip(), r["publicKey"])
         self.assertEqual(os.stat(self.hs("wireguard", "private")).st_mode & 0o777, 0o600)
         # Import: must be a 32-byte base64 key
@@ -1373,6 +1377,17 @@ class HeliosCtl(unittest.TestCase):
         self.assertIn("refers to a file", up("openvpn", "client\nremote a 1\nkey /k.pem\n", ok=False)["error"])
         self.assertIn("client", up("openvpn", "remote a 1\n", ok=False)["error"])
         self.assertIn("remote", up("openvpn", "client\n", ok=False)["error"])
+        # Spellings OpenVPN accepts for the same directives
+        r = up("openvpn", 'client\nremote a 1\n--script-security 2\n"up" /x\nu\\p /y\nhttp-proxy p 8080 /etc/shadow\n', ok=False)
+        self.assertIn("credentials file", r["error"])
+        r = up("openvpn", 'client\nremote a 1\n--script-security 2\n"up" /x\nu\\p /y\n')
+        self.assertNotIn("/x", open(self.hs("egress", "client.ovpn")).read())
+        self.assertEqual(r["removedDirectives"], ["script-security", "up"])
+        # wg-quick drops "#…" before reading a line, so a comment can't hide a key or a section
+        sneaky = WG_OUT.replace("[Interface]", "[Interface] # hi").replace("PostUp =", "PostUp = x #")
+        r = up("wireguard", sneaky)
+        self.assertNotIn("PostUp", open(self.hs("egress", "wg-out.conf")).read())
+        self.assertIn("before its [Interface]", up("wireguard", "#\nPostUp = evil\n" + WG_OUT, ok=False)["error"])
         self.assertIn("two lines", up("auth", "just-one", ok=False)["error"])
         up("auth", "alice\nsecret\n")
         self.assertEqual(open(self.hs("egress", "auth.txt")).read(), "alice\nsecret\n")
@@ -1386,7 +1401,7 @@ class HeliosCtl(unittest.TestCase):
     def test_remote_status_live_and_failing(self):
         self.helios("remote-set", json.dumps({"ingress": {"wireguard": {"enabled": True}}}))
         os.makedirs(self.hs("wireguard"))
-        open(self.hs("wireguard", "public"), "w").write("SERVERPUB=\n")
+        open(self.hs("wireguard", "public"), "w").write("U0VSVkVSUFVCX19fX19fX19fX19fX19fX19fX19fX18=\n")
         os.makedirs(self.hs("openvpn", "server"))
         st = json.load(open(os.path.join(self.cfg, "state.json")))
         st["heliosphere"]["ingress"]["wireguard"]["peers"] = [{"name": "pixel", "publicKey": "clientpub-pixel=", "ip": "10.61.0.2"},
@@ -1399,7 +1414,7 @@ class HeliosCtl(unittest.TestCase):
         self.assertIsNone(r["publicHost"])
         s = r["status"]
         self.assertEqual(s["tailscale"], {"online": True, "ip": "100.64.0.9"})
-        self.assertEqual(s["wireguard"]["publicKey"], "SERVERPUB=")
+        self.assertEqual(s["wireguard"]["publicKey"], "U0VSVkVSUFVCX19fX19fX19fX19fX19fX19fX19fX18=")
         self.assertEqual(s["wireguard"]["peers"][0], {"name": "pixel", "ip": "10.61.0.2", "lastHandshake": 1700000000, "rx": 1000, "tx": 2000})
         self.assertEqual(s["wireguard"]["peers"][1]["lastHandshake"], None)
         self.assertEqual(s["openvpn"]["clients"], [{"name": "laptop", "connected": True}, {"name": "phone", "connected": False}])
@@ -1410,7 +1425,7 @@ class HeliosCtl(unittest.TestCase):
         s = self.helios("remote")["status"]
         self.assertEqual(s["tailscale"], {"online": None, "ip": None})
         self.assertEqual([x["lastHandshake"] for x in s["wireguard"]["peers"]], [None, None])
-        self.assertEqual(s["wireguard"]["publicKey"], "SERVERPUB=")
+        self.assertEqual(s["wireguard"]["publicKey"], "U0VSVkVSUFVCX19fX19fX19fX19fX19fX19fX19fX18=")
         self.assertEqual([x["connected"] for x in s["openvpn"]["clients"]], [None, None])
         self.assertEqual(s["proxy"], {"running": None})
         # a way out that's configured but not passing traffic

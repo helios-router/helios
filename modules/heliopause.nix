@@ -62,6 +62,7 @@ let
   qNets = lib.optionals armed (where (a: a.quarantine or false));
   knownMacs = lib.unique (map (d: lib.toLower d.mac) I.devices);
   macElems = lib.optionalString (knownMacs != [ ]) "elements = { ${lib.concatStringsSep ", " knownMacs} }";
+  blockedMacs = lib.unique (map (d: lib.toLower d.mac) (builtins.filter (d: d.blocked or false) I.devices));
   unknown = rule: on qNets "ether saddr != @known_macs ${rule}";
 
   isMediaClient = d: (d.media or false) && !(I.byName.${d.vlan}.access.admin or true);
@@ -79,11 +80,15 @@ in
         set doh_v4 { type ipv4_addr; flags interval; elements = { ${lib.concatStringsSep ", " bl.doh_v4} } }
         # Cloudflare WARP endpoints (verify current ranges before relying on this)
         set warp_v4 { type ipv4_addr; flags interval; elements = { ${lib.concatStringsSep ", " bl.warp_v4} } }
+        set doh_v6 { type ipv6_addr; flags interval; elements = { ${lib.concatStringsSep ", " bl.doh_v6} } }
+        set warp_v6 { type ipv6_addr; flags interval; elements = { ${lib.concatStringsSep ", " bl.warp_v6} } }
         # From state.json: devices marked "media" (TVs) — may reach media servers, may be cast to
         set media_clients { type ipv4_addr; ${I.nftElems (I.ipsWhere isMediaClient)} }
         # From state.json: devices cut off entirely ("blocked"). Photosphere's
         # Pause button also adds/removes elements live.
         set cutoff { type ipv4_addr; ${I.nftElems (I.ipsWhere (d: d.blocked or false))} }
+        # The same devices by MAC, so a paused device can't carry on over IPv6 (SLAAC)
+        set cutoff_mac { type ether_addr; ${lib.optionalString (blockedMacs != [ ]) "elements = { ${lib.concatStringsSep ", " blockedMacs} }"} }
         # Trap: anything on a non-admin network poking the router's admin ports
         # is dropped and logged once per hour per device ("heliopause-trap:" →
         # logwatch → Solar Wind flare). DNS/DHCP keep working.
@@ -104,6 +109,8 @@ in
           meta l4proto { tcp, udp } th dport 853 reject
           ip daddr @doh_v4 reject
           ip daddr @warp_v4 reject
+          ip6 daddr @doh_v6 reject
+          ip6 daddr @warp_v6 reject
           udp dport 2408 reject
           ${on (builtins.filter (n: I.byName.${n}.access.internet) qNets) ''oifname "wan" accept''}
           drop
@@ -137,12 +144,15 @@ in
           type filter hook forward priority filter; policy drop;
           # Blocked devices first, so pausing one also kills its open connections
           ip saddr @cutoff reject
+          ether saddr @cutoff_mac reject
           ip daddr @cutoff drop
           ct state vmap { established : accept, related : accept, invalid : drop }
 
           # Anti-spoofing: a non-admin network may only send from its own subnet
           ${lines (map (n: ''iifname "${n}" ip saddr != ${net n} drop'') nonAdmin)}
           ${lib.optionalString hs ''iifname "ve-heliosphere" ip saddr != 10.60.0.2 drop''}
+          # Remote access is IPv4-only, and its filtering (inside the container too) only knows IPv4
+          ${lib.optionalString hs ''iifname "ve-heliosphere" meta nfproto ipv6 drop''}
 
           # Devices not named yet on "quarantine" networks
           ${unknown "jump quarantine_fwd"}
@@ -151,6 +161,8 @@ in
           ${on filtered "meta l4proto { tcp, udp } th dport 853 reject"}
           ${on filtered "ip daddr @doh_v4 reject"}
           ${on filtered "ip daddr @warp_v4 reject"}
+          ${on filtered "ip6 daddr @doh_v6 reject"}
+          ${on filtered "ip6 daddr @warp_v6 reject"}
           ${on filtered "udp dport 2408 reject"}
 
           # You over Tailscale reach every network
