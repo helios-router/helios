@@ -1,0 +1,9 @@
+#!/bin/sh
+# lldpd JSON for "show neighbors details": one managed switch on trunk0
+[ "$STUB_LLDP" = "none" ] && { echo '{"lldp":{}}'; exit 0; }
+cat <<'JSON'
+{"lldp":{"interface":[{"trunk0":{"via":"LLDP","rid":"1","age":"0 day, 00:10:12",
+ "chassis":{"switch-1":{"id":{"type":"mac","value":"02:00:00:00:99:01"},"descr":"Test Switch 24G","mgmt-ip":["10.99.0.2","fe80::1"],
+   "capability":[{"type":"Bridge","enabled":true},{"type":"Router","enabled":false}]}},
+ "port":{"id":{"type":"ifname","value":"Ethernet1/0/8"},"descr":"uplink to router"}}}]}}
+JSON

@@ -1,0 +1,15 @@
+#!/bin/sh
+python3 - <<'PY'
+import json, datetime
+d = datetime.date.today()
+days = []
+for i in range(14, 0, -1):
+    x = d - datetime.timedelta(days=i - 1)
+    days.append({"date": {"year": x.year, "month": x.month, "day": x.day}, "rx": (40 + (i * 7) % 23) * 10**9, "tx": (3 + (i * 3) % 5) * 10**9})
+months = []
+for m in range(1, 12):
+    months.append({"date": {"year": 2026, "month": m}, "rx": (800 + m * 37) * 10**9, "tx": (70 + m * 3) * 10**9})
+print(json.dumps({"interfaces": [
+  {"name": "wan", "traffic": {"total": {"rx": 9.8e12, "tx": 0.9e12}, "day": days, "month": months}},
+  {"name": "family", "traffic": {"total": {"rx": 0.6e12, "tx": 5.1e12}, "day": days, "month": months}}]}))
+PY

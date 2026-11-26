@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>HeliOS</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="photosphere.css">
+  <script src="../base1/cockpit.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="app-head">
+      <div class="brand">
+        <img class="brand-mark" src="helios-icon.png" alt="">
+        <div>
+          <h1 id="head-title">HeliOS</h1>
+          <div class="sub" id="head-sub">Connecting…</div>
+        </div>
+      </div>
+      <div class="head-right">
+      <!-- Each column: a main tab, with its advanced tabs (shown by the gear) in a row underneath -->
+      <nav class="tabs" id="tabs" role="tablist">
+        <div class="tab-col"><a href="#overview" data-tab="overview">Overview</a>
+          <div class="tab-sub"><a href="#hardware" data-tab="hardware" data-adv hidden>Hardware</a></div></div>
+        <div class="tab-col"><a href="#devices" data-tab="devices">Devices <span class="tab-badge" id="tab-new" hidden></span></a>
+          <div class="tab-sub"><a href="#networks" data-tab="networks" data-adv hidden>Networks</a></div></div>
+        <div class="tab-col"><a href="#traffic" data-tab="traffic">Traffic</a>
+          <div class="tab-sub"><a href="#filtering" data-tab="filtering" data-adv hidden>Filtering</a></div></div>
+        <div class="tab-col"><a href="#notifications" data-tab="notifications">Notifications</a>
+          <div class="tab-sub"><a href="#remote" data-tab="remote" data-adv data-svc="remote" hidden>Remote access</a></div></div>
+        <div class="tab-col"><div class="tab-top"><a href="#qos" data-tab="qos">QoS</a><a href="#upnp" data-tab="upnp">UPnP</a></div>
+          <div class="tab-sub"><a href="#printing" data-tab="printing" data-adv data-svc="printing" hidden>Printing</a></div></div>
+        <div class="tab-col"><a href="#history" data-tab="history">History</a>
+          <div class="tab-sub"><a href="#advanced" data-tab="advanced" data-adv hidden>Advanced</a></div></div>
+      </nav>
+      <select id="tab-menu" class="tab-menu" aria-label="Page"></select>
+      <div class="head-tools">
+      <button class="adv-btn" id="adv-btn" type="button" aria-pressed="false" title="Show advanced settings">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+      </button>
+      <button class="theme-btn" id="theme-btn" type="button"></button>
+      </div>
+      </div>
+    </header>
+
+    <div id="access" class="alert alert-warn" hidden>
+      <strong>Administrative access needed.</strong>
+      Turn on <em>Administrative access</em> in Cockpit's top bar — HeliOS reads leases and firewall state as root.
+    </div>
+
+    <section id="pending" class="pending" hidden>
+      <div class="pending-main">
+        <span class="pending-dot" aria-hidden="true"></span>
+        <div>
+          <strong id="pending-title">Pending changes</strong>
+          <ul id="pending-list"></ul>
+        </div>
+      </div>
+      <div class="pending-actions">
+        <button class="btn btn-link" id="pending-discard">Discard</button>
+        <button class="btn btn-primary" id="pending-apply">Apply changes</button>
+      </div>
+    </section>
+
+    <main id="view"></main>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toasts" aria-live="polite"></div>
+  <div id="tooltip" class="tooltip" hidden></div>
+
+  <script src="photosphere.js"></script>
+</body>
+</html>

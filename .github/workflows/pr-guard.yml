@@ -1,0 +1,39 @@
+# Supply-chain guard for pull requests. Runs with a read-only token and no
+# secrets (pull_request, never pull_request_target), and runs the guard script
+# from the BASE branch, so a PR can't weaken the check that reviews it.
+name: PR guard
+on: pull_request
+permissions: { contents: read }
+
+jobs:
+  guard:
+    name: supply-chain checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0, persist-credentials: false }
+      - name: Run the base branch's guard on this diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git show "$BASE:.github/scripts/pr-guard.py" > "$RUNNER_TEMP/pr-guard.py" 2>/dev/null \
+            || cp .github/scripts/pr-guard.py "$RUNNER_TEMP/pr-guard.py"   # first PR that adds it
+          python3 -I "$RUNNER_TEMP/pr-guard.py" "$BASE" "$HEAD"
+
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
+        with: { fail-on-severity: moderate, comment-summary-in-pr: never }
+
+  workflows:
+    name: workflow security (zizmor, actionlint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: pipx run zizmor==1.33.1 --min-severity medium .github/workflows
+      - uses: cachix/install-nix-action@382a9ed9481c7c1f94f68b72ef105b3417c73877 # v32.1.0
+      # Tools come from the nixpkgs pinned in flake.lock, not a download script
+      - run: nix shell --inputs-from . nixpkgs#actionlint nixpkgs#shellcheck -c actionlint -color

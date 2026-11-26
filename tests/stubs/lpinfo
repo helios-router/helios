@@ -1,0 +1,6 @@
+#!/bin/sh
+echo "lpinfo $*" >> "${STUB_LOG:-/dev/null}"
+case "$1" in
+  -v) printf 'network beh\ndirect usb://Brother/HL-L2350DW%%20series?serial=E78123\nnetwork ipp://10.30.0.50/ipp/print\nnetwork socket\n' ;;
+  -m) printf 'everywhere IPP Everywhere\ndrv:///brlaser.drv/brl2350.ppd Brother HL-L2350DW series, using brlaser v6\ngutenprint.5.3://bjc-PIXMA-iP4200/expert Canon PIXMA iP4200 - CUPS+Gutenprint v5.3.5\n' ;;
+esac

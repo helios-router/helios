@@ -1,0 +1,8 @@
+#!/bin/sh
+# openvpn --genkey secret FILE (the box may not have openvpn)
+if [ "$1" = "--genkey" ]; then
+  for last; do :; done
+  printf -- '-----BEGIN OpenVPN Static key V1-----\nstubstubstubstub\n-----END OpenVPN Static key V1-----\n' > "$last"
+  exit 0
+fi
+exit 1

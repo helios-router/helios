@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "nft $*" >> "$STUB_LOG"

@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "cupsenable $*" >> "${STUB_LOG:-/dev/null}"

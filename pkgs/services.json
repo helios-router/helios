@@ -1,0 +1,129 @@
+{
+  "_comment": "What runs on a HeliOS router. Core services always run. Switchable services can be turned on/off in Photosphere (Advanced → Services); state.json \"services\" overrides the site.nix default. Turning one on downloads its software at the next apply; turning it off removes it at the next apply.",
+  "core": [
+    {
+      "id": "network",
+      "label": "Networks and DHCP",
+      "desc": "VLANs, addresses, local names (Kea, systemd-networkd).",
+      "units": [
+        "kea-dhcp4-server"
+      ]
+    },
+    {
+      "id": "firewall",
+      "label": "Firewall",
+      "desc": "Heliopause: isolation between networks, the trap, DNS enforcement.",
+      "units": [
+        "nftables"
+      ]
+    },
+    {
+      "id": "dns",
+      "label": "DNS and filtering",
+      "desc": "AdGuard Home answers every network's DNS and applies the filtering profiles.",
+      "units": [
+        "adguardhome"
+      ]
+    },
+    {
+      "id": "time",
+      "label": "Time (NTP)",
+      "desc": "chrony keeps the router and your devices on time.",
+      "units": [
+        "chronyd"
+      ]
+    },
+    {
+      "id": "admin",
+      "label": "Management",
+      "desc": "This interface (Cockpit), SSH, config backups and change history.",
+      "units": [
+        "sshd",
+        "helios-backup.timer"
+      ]
+    },
+    {
+      "id": "health",
+      "label": "Health checks",
+      "desc": "Outage monitor, hardware watchdog, hardware detection, traffic stats.",
+      "units": [
+        "helios-uplink.timer",
+        "helios-detect.timer",
+        "vnstat"
+      ]
+    }
+  ],
+  "services": {
+    "notifications": {
+      "group": "default",
+      "label": "Notifications",
+      "size": "small",
+      "tab": "notifications",
+      "units": [
+        "ntfy-sh"
+      ],
+      "desc": "Push alerts to your phone: outages, intrusions caught by the trap, UPS and security findings."
+    },
+    "vulnScan": {
+      "group": "default",
+      "label": "Weekly vulnerability scan",
+      "size": "small",
+      "units": [
+        "helios-vulnix.timer"
+      ],
+      "desc": "Checks everything installed against the public vulnerability database once a week."
+    },
+    "printing": {
+      "group": "optional",
+      "label": "Print server",
+      "size": "medium",
+      "tab": "printing",
+      "units": [
+        "cups"
+      ],
+      "desc": "Shares USB and network printers with your networks, including AirPrint for phones and tablets."
+    },
+    "remote": {
+      "group": "optional",
+      "label": "Remote access",
+      "size": "medium",
+      "tab": "remote",
+      "units": [
+        "container@heliosphere"
+      ],
+      "desc": "Use your home internet and filtering from anywhere, through Tailscale, WireGuard, OpenVPN or a proxy."
+    },
+    "logwatch": {
+      "group": "optional",
+      "label": "AI log triage",
+      "size": "large",
+      "units": [
+        "logwatch.timer"
+      ],
+      "desc": "A local language model reads the system log and alerts you to what matters. You pick and download a model (0.6–9 GB) to suit the router; it pauses itself when the router is busy.",
+      "tab": "advanced"
+    }
+  },
+  "elsewhere": [
+    {
+      "label": "QoS",
+      "tab": "qos",
+      "desc": "On/off and speeds on the QoS tab."
+    },
+    {
+      "label": "UPnP",
+      "tab": "upnp",
+      "desc": "On/off and the block list on the UPnP tab."
+    },
+    {
+      "label": "UPS and neighbour discovery",
+      "tab": "hardware",
+      "desc": "Drivers on the Hardware tab."
+    },
+    {
+      "label": "Tailscale admin access",
+      "tab": null,
+      "desc": "Set in site.nix: it needs an auth key, and switching it off here could cut off remote admin."
+    }
+  ]
+}

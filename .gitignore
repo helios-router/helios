@@ -1,0 +1,13 @@
+# Site files belong in your private /etc/nixos repo, not here
+/site.nix
+/state.json
+/hardware-configuration.nix
+tests/node_modules/
+tests/out/
+__pycache__/
+result
+
+# Private, never publish
+/my-site/
+/phobos-lab/
+/phobos-lan/

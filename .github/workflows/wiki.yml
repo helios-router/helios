@@ -1,0 +1,33 @@
+# Publishes wiki/ to the GitHub wiki (a separate git repo, <repo>.wiki.git) on
+# every push to main that changes it. The wiki must exist first: create any one
+# page in the GitHub web UI once, then this keeps it in sync (it overwrites edits
+# made in the web UI, so edit wiki/ in a pull request instead).
+name: Wiki
+on:
+  push:
+    branches: [main]
+    paths: ["wiki/**"]
+  workflow_dispatch:
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: Push wiki/ to the wiki repository
+        env:
+          TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/${REPO}.wiki.git" "$RUNNER_TEMP/wiki"
+          rsync -a --delete --exclude .git wiki/ "$RUNNER_TEMP/wiki/"
+          cd "$RUNNER_TEMP/wiki"
+          git add -A
+          git diff --cached --quiet && { echo "Wiki already up to date"; exit 0; }
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "Sync from ${REPO}@${SHA}"
+          git push

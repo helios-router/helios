@@ -1,0 +1,42 @@
+// Tailnet policy for HeliOS. MERGE into your existing policy (admin console →
+// Access controls) — don't paste over it. Replace the emails.
+{
+  "groups": {
+    "group:admin":  ["you@example.com"],
+    "group:adults": ["you@example.com"]
+  },
+
+  "tagOwners": {
+    "tag:helios":      ["group:admin"],
+    "tag:heliosphere": ["group:admin"],
+    "tag:proxy":       ["group:admin"]       // only if a VPS reverse-proxies Solar Wind
+  },
+
+  "grants": [
+    // You: everything — home subnets, the router, and any exit node (incl. the
+    // router's unfiltered admin exit). No "via" = any exit node.
+    { "src": ["group:admin"], "dst": ["*"], "ip": ["*"] },
+
+    // Everyone else: internet ONLY through the filtered Heliosphere exit.
+    { "src": ["autogroup:member"], "dst": ["autogroup:internet"], "ip": ["*"],
+      "via": ["tag:heliosphere"] },
+
+    // exposure = "proxy": the reverse proxy may reach Solar Wind and nothing else
+    { "src": ["tag:proxy"], "dst": ["tag:helios"], "ip": ["tcp:2586"] }
+  ],
+
+  // exposure = "funnel": allow Tailscale Funnel on the router
+  "nodeAttrs": [
+    { "target": ["tag:helios"], "attr": ["funnel"] }
+  ],
+
+  "autoApprovers": {
+    "exitNode": ["tag:helios", "tag:heliosphere"],
+    "routes": {
+      "10.20.0.0/24": ["tag:helios"],
+      "10.30.0.0/24": ["tag:helios"],
+      "10.40.0.0/24": ["tag:helios"],
+      "10.99.0.0/24": ["tag:helios"]
+    }
+  }
+}

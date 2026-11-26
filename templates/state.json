@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "restrictUnnamed": true,
+  "networks": [
+    {
+      "name": "trusted",
+      "label": "Trusted",
+      "vlan": 20,
+      "prefix": "10.20.0",
+      "ipv6": "0x20",
+      "role": "trusted"
+    },
+    {
+      "name": "family",
+      "label": "Family",
+      "vlan": 30,
+      "prefix": "10.30.0",
+      "ipv6": "0x30",
+      "role": "family"
+    },
+    {
+      "name": "iot",
+      "label": "IoT",
+      "vlan": 40,
+      "prefix": "10.40.0",
+      "ipv6": null,
+      "role": "iot"
+    },
+    {
+      "name": "strict",
+      "label": "Strict",
+      "vlan": 50,
+      "prefix": "10.50.0",
+      "ipv6": "0x50",
+      "role": "strict"
+    },
+    {
+      "name": "mgmt",
+      "label": "Mgmt",
+      "vlan": 99,
+      "prefix": "10.99.0",
+      "ipv6": null,
+      "role": "mgmt"
+    }
+  ],
+  "devices": [],
+  "qos": {
+    "enabled": false,
+    "down": null,
+    "up": null
+  },
+  "upnp": {
+    "enabled": true
+  }
+}

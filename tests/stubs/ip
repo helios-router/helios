@@ -1,0 +1,8 @@
+#!/bin/sh
+echo "ip $*" >> "$STUB_LOG"
+case "$*" in
+  "-j neigh show") echo '[{"dst":"10.20.0.10","dev":"trusted","lladdr":"11:22:33:44:55:66","state":["REACHABLE"]},{"dst":"10.30.0.101","dev":"family","lladdr":"aa:aa:aa:00:00:01","state":["STALE"]},{"dst":"10.40.0.100","dev":"iot","lladdr":"bb:bb:bb:00:00:02","state":["DELAY"]}]';;
+  "-j addr show dev wan") echo '[{"ifname":"wan","flags":["BROADCAST","MULTICAST","UP","LOWER_UP"],"addr_info":[{"family":"inet","local":"98.42.17.201","prefixlen":22},{"family":"inet6","local":"2600:6c50:7f:1a::1","prefixlen":128,"scope":"global"}]}]';;
+  "-j route show default") echo '[{"dst":"default","gateway":"98.42.16.1","dev":"wan"}]';;
+  *) echo '[]';;
+esac

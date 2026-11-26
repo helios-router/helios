@@ -1,0 +1,10 @@
+#!/bin/sh
+# upsc <ups>@localhost; STUB_UPS=fail simulates upsd being down
+[ "$STUB_UPS" = "fail" ] && { echo "Error: Data stale" >&2; exit 1; }
+cat <<EOT
+battery.charge: 97
+battery.runtime: 1380
+ups.load: 23
+ups.model: Back-UPS ES 600M1
+ups.status: OL
+EOT

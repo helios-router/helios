@@ -1,0 +1,12 @@
+{
+  "_comment": "Free CUPS driver packages Photosphere can switch on (state.json printing.drivers). Proprietary drivers (Canon UFRII, Brother's own…) stay in site.nix: helios.printing.drivers + unfreeDrivers. Most printers made since ~2015 need none of these: they print driverless (IPP Everywhere / AirPrint).",
+  "drivers": {
+    "gutenprint":   { "attr": "gutenprint",   "label": "Gutenprint",       "desc": "Hundreds of inkjets and photo printers: Canon, Epson, HP, Lexmark and more." },
+    "hplip":        { "attr": "hplip",        "label": "HP (HPLIP)",       "desc": "HP inkjets and LaserJets that don't print driverless." },
+    "brlaser":      { "attr": "brlaser",      "label": "Brother lasers",   "desc": "Brother monochrome laser printers (HL-, DCP-, MFC- series)." },
+    "foo2zjs":      { "attr": "foo2zjs",      "label": "foo2zjs",          "desc": "ZjStream and similar lasers: older HP LaserJet, Minolta, Samsung, Oki, Xerox." },
+    "splix":        { "attr": "splix",        "label": "SpliX",            "desc": "Samsung and Xerox SPL laser printers." },
+    "epson-escpr":  { "attr": "epson-escpr",  "label": "Epson ESC/P-R",    "desc": "Most Epson inkjets." },
+    "epson-escpr2": { "attr": "epson-escpr2", "label": "Epson ESC/P-R 2",  "desc": "Newer Epson inkjets and EcoTank models." }
+  }
+}

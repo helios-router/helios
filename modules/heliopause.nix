@@ -1,0 +1,199 @@
+# Heliopause — the firewall, the edge of the solar system.
+# Also carries Magnetosphere's enforcement rules (DNS hijack, anti-bypass),
+# since nftables needs them in the same chains.
+#
+# Every rule below is generated from the networks in state.json and their
+# access flags (see pkgs/networks.json for what each flag means). Nothing here
+# knows a network by name.
+{ config, lib, pkgs, ... }:
+
+let
+  cfg = config.helios;
+  I = cfg.internal;
+  net = I.net;
+  where = I.where;
+
+  quote = names: lib.concatMapStringsSep ", " (n: ''"${n}"'') names;
+  # nft rejects an empty set, so a rule for "no networks" is simply left out
+  on = names: rule: lib.optionalString (names != [ ]) ''iifname { ${quote names} } ${rule}'';
+  lines = lib.concatStringsSep "\n          ";
+
+  hs = I.on "remote";
+  bl = lib.importJSON ../pkgs/blocklists.json;
+  R = I.remote;   # Heliosphere's ways in (docs/heliosphere.md)
+  hsIp = "10.60.0.2";
+  proxyPorts = "{ ${toString R.proxy.socksPort}, ${toString R.proxy.httpPort} }";
+  hsLan = lib.unique (lib.concatMap (m: lib.optionals R.${m}.enabled (builtins.filter (n: lib.elem n I.names) R.${m}.lan)) [ "tailscale" "wireguard" "openvpn" ]);
+  ts = cfg.tailscale.enable;
+  nonAdmin = where (a: !a.admin);
+  filtered = where (a: a.filtered) ++ lib.optional hs "ve-heliosphere";
+  adminIfs = I.admins ++ [ "rescue0" ] ++ lib.optional ts "tailscale0";
+  internet = where (a: a.internet) ++ lib.optional hs "ve-heliosphere";
+
+  # Who may open connections to whom
+  reachRules = lines (lib.concatMap (n:
+    let r = n.access.reach; in
+    if r == "all" then [ ''iifname "${n.name}" accept   # ${n.name} reaches every network'' ]
+    else map (t: ''iifname "${n.name}" oifname "${t}" accept'') r) I.networks);
+
+  # Media servers (state.json "mediaServer" on a device): media devices allowed to
+  # use this server (their "mediaServers" list, or all servers when they have
+  # none), plus the networks the server lists, may reach its ports.
+  portSet = ps: "{ ${lib.concatMapStringsSep ", " toString ps} }";
+  mediaRules = lines (lib.concatMap (d:
+    let
+      m = d.mediaServer;
+      dst = lib.optional ((m.tcp or [ ]) != [ ]) "ip daddr ${d.ip} tcp dport ${portSet m.tcp} accept"
+        ++ lib.optional ((m.udp or [ ]) != [ ]) "ip daddr ${d.ip} udp dport ${portSet m.udp} accept";
+      nets = builtins.filter (n: lib.elem n I.names) (m.networks or [ ]);
+      clients = I.ipsWhere (c: isMediaClient c && ((c.mediaServers or null) == null || lib.elem d.name c.mediaServers));
+    in
+      lib.optionals (clients != [ ]) (map (r: "ip saddr { ${lib.concatStringsSep ", " clients} } ${r}   # ${d.name}") dst)
+      ++ lib.optionals (nets != [ ]) (map (r: "${on nets r}   # ${d.name}") dst))
+    I.mediaServers);
+
+  # Unnamed devices are restricted on networks with "quarantine" until you name
+  # them. Matched by MAC (covers IPv4 and IPv6). Needs state.json
+  # "restrictUnnamed": true (Photosphere → Devices) AND a named device on an admin
+  # network, so neither a fresh install nor an upgrade locks its owner out;
+  # Tailscale and the rescue port are never affected.
+  armed = (cfg.state.restrictUnnamed or false)
+    && builtins.any (d: (I.byName.${d.vlan}.access.admin or false)) I.devices;
+  qNets = lib.optionals armed (where (a: a.quarantine or false));
+  knownMacs = lib.unique (map (d: lib.toLower d.mac) I.devices);
+  macElems = lib.optionalString (knownMacs != [ ]) "elements = { ${lib.concatStringsSep ", " knownMacs} }";
+  unknown = rule: on qNets "ether saddr != @known_macs ${rule}";
+
+  isMediaClient = d: (d.media or false) && !(I.byName.${d.vlan}.access.admin or true);
+  rescue = cfg.interfaces.rescueAddress;
+  sw = cfg.solarWind;
+  trapPorts = lib.concatMapStringsSep ", " toString ([ 22 23 80 443 2222 3000 8080 8090 9090 ] ++ lib.optional (I.on "notifications") sw.port);
+in
+{
+  networking.firewall.enable = false;
+  networking.nftables = {
+    enable = true;
+    ruleset = ''
+      table inet heliopause {
+        # Public DNS / DoH resolvers filtered networks must not reach directly
+        set doh_v4 { type ipv4_addr; flags interval; elements = { ${lib.concatStringsSep ", " bl.doh_v4} } }
+        # Cloudflare WARP endpoints (verify current ranges before relying on this)
+        set warp_v4 { type ipv4_addr; flags interval; elements = { ${lib.concatStringsSep ", " bl.warp_v4} } }
+        # From state.json: devices marked "media" (TVs) — may reach media servers, may be cast to
+        set media_clients { type ipv4_addr; ${I.nftElems (I.ipsWhere isMediaClient)} }
+        # From state.json: devices cut off entirely ("blocked"). Photosphere's
+        # Pause button also adds/removes elements live.
+        set cutoff { type ipv4_addr; ${I.nftElems (I.ipsWhere (d: d.blocked or false))} }
+        # Trap: anything on a non-admin network poking the router's admin ports
+        # is dropped and logged once per hour per device ("heliopause-trap:" →
+        # logwatch → Solar Wind flare). DNS/DHCP keep working.
+        set trapped { type ipv4_addr; flags timeout; timeout 1h; }
+        # Named devices (state.json); anything else on a "quarantine" network is restricted
+        set known_macs { type ether_addr; ${macElems} }
+
+        # Unnamed devices: DHCP, DNS and NTP from the router, nothing else (admin
+        # ports hit the trap like on any other network)
+        chain quarantine_in {
+          meta l4proto { tcp, udp } th dport 53 accept
+          udp dport { 67, 123, 547 } accept
+          tcp dport { ${trapPorts} } ip saddr != @trapped add @trapped { ip saddr } log prefix "heliopause-trap: " level warn
+          drop
+        }
+        # Unnamed devices: filtered internet only (where the network has internet), never other networks
+        chain quarantine_fwd {
+          meta l4proto { tcp, udp } th dport 853 reject
+          ip daddr @doh_v4 reject
+          ip daddr @warp_v4 reject
+          udp dport 2408 reject
+          ${on (builtins.filter (n: I.byName.${n}.access.internet) qNets) ''oifname "wan" accept''}
+          drop
+        }
+
+        chain input {
+          type filter hook input priority filter; policy drop;
+          iif lo accept
+          # The rescue address only answers on the rescue port itself — otherwise
+          # Linux would accept it from any VLAN and expose password SSH there.
+          ip daddr ${rescue} iifname != "rescue0" drop
+          ct state vmap { established : accept, related : accept, invalid : drop }
+          iifname "wan" icmp type echo-request limit rate over 10/second drop
+          meta l4proto { icmp, ipv6-icmp } accept
+          ${unknown "jump quarantine_in   # not named yet"}
+          ${on nonAdmin ''tcp dport { ${trapPorts} } ip saddr != @trapped add @trapped { ip saddr } log prefix "heliopause-trap: " level warn''}
+          ${on nonAdmin "tcp dport { ${trapPorts} } drop"}
+          iifname "wan" udp dport 546 accept                         # DHCPv6-PD
+          ${on adminIfs "accept   # admin"}
+          ${on (nonAdmin ++ lib.optional hs "ve-heliosphere") "meta l4proto { tcp, udp } th dport 53 accept   # DNS"}
+          ${on nonAdmin "udp dport { 67, 123 } accept   # DHCP, NTP"}
+          ${on (where (a: !a.admin && a.printing)) "tcp dport 631 accept   # printing"}
+          ${on (where (a: !a.admin && a.upnp)) "udp dport { 1900, 5351 } accept   # UPnP SSDP, NAT-PMP"}
+          ${on (where (a: !a.admin && a.upnp)) "tcp dport 5000 accept   # miniupnpd control"}
+          ${on (where (a: !a.admin && a.mdns)) "udp dport 5353 accept   # mDNS"}
+          ${on (builtins.filter (n: !I.byName.${n}.access.admin) (I.nutServerNets or [ ])) "tcp dport 3493 accept   # UPS status for other machines (NUT)"}
+          ${lib.optionalString ts ''iifname "wan" udp dport 41641 accept   # Tailscale direct''}
+        }
+
+        chain forward {
+          type filter hook forward priority filter; policy drop;
+          # Blocked devices first, so pausing one also kills its open connections
+          ip saddr @cutoff reject
+          ip daddr @cutoff drop
+          ct state vmap { established : accept, related : accept, invalid : drop }
+
+          # Anti-spoofing: a non-admin network may only send from its own subnet
+          ${lines (map (n: ''iifname "${n}" ip saddr != ${net n} drop'') nonAdmin)}
+          ${lib.optionalString hs ''iifname "ve-heliosphere" ip saddr != 10.60.0.2 drop''}
+
+          # Devices not named yet on "quarantine" networks
+          ${unknown "jump quarantine_fwd"}
+
+          # Magnetosphere anti-bypass for filtered networks: DoT, direct DoH, WARP
+          ${on filtered "meta l4proto { tcp, udp } th dport 853 reject"}
+          ${on filtered "ip daddr @doh_v4 reject"}
+          ${on filtered "ip daddr @warp_v4 reject"}
+          ${on filtered "udp dport 2408 reject"}
+
+          # You over Tailscale reach every network
+          ${lib.optionalString ts ''iifname "tailscale0" accept''}
+          # Network-to-network access ("reach")
+          ${reachRules}
+
+          # Port forwards opened by UPnP/NAT-PMP (miniupnpd only maps for "upnp" networks)
+          iifname "wan" ct status dnat accept
+
+          # Remote access clients may reach the home networks their way in allows
+          ${lib.optionalString (hs && hsLan != [ ]) ''iifname "ve-heliosphere" oifname { ${quote hsLan} } accept   # Remote access → home networks''}
+          # Remote access proxy for chosen networks (never offered on the WAN: it isn't encrypted)
+          ${lib.optionalString (hs && R.proxy.enabled) (on (builtins.filter (n: lib.elem n I.names) R.proxy.networks) "ip daddr ${hsIp} tcp dport ${proxyPorts} accept   # Remote access proxy")}
+
+          # Pinholes: media servers, and casting to media devices
+          ${mediaRules}
+          ${on (where (a: a.cast)) "ip daddr @media_clients accept   # casting to TVs"}
+
+          # Internet access; anything not allowed above never crosses networks
+          ${on internet ''oifname "wan" accept''}
+        }
+      }
+
+      table inet heliopause-nat {
+        set known_macs { type ether_addr; ${macElems} }
+        chain prerouting {
+          type nat hook prerouting priority dstnat;
+          # Magnetosphere: hijack hard-coded DNS on filtered networks (and from unnamed devices) back to AdGuard
+          ${unknown "meta l4proto { tcp, udp } th dport 53 redirect to :53"}
+          ${on filtered "meta l4proto { tcp, udp } th dport 53 redirect to :53"}
+          # Remote access: WireGuard / OpenVPN ports on the WAN go to Heliosphere (the proxy is LAN-only)
+          ${lib.optionalString (hs && R.wireguard.enabled) ''iifname "wan" udp dport ${toString R.wireguard.port} dnat ip to ${hsIp}   # WireGuard''}
+          ${lib.optionalString (hs && R.openvpn.enabled) ''iifname "wan" ${R.openvpn.proto} dport ${toString R.openvpn.port} dnat ip to ${hsIp}   # OpenVPN''}
+          # Gadgets get their time from the router, whatever server they hard-code
+          ${on (where (a: a.forceNtp)) "udp dport 123 redirect to :123"}
+        }
+        chain postrouting {
+          type nat hook postrouting priority srcnat;
+          oifname "wan" meta nfproto ipv4 masquerade
+          ${lib.optionalString ts ''iifname "tailscale0" oifname "wan" meta nfproto ipv6 masquerade   # exit-node IPv6''}
+        }
+      }
+    '';
+  };
+}

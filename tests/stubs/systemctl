@@ -1,0 +1,16 @@
+#!/bin/sh
+echo "systemctl $*" >> "$STUB_LOG"
+if [ "$1" = show ]; then
+  shift; while [ "$1" != "${1#-}" ] || [ "$1" = "Id,ActiveState,SubState,LoadState" ]; do shift; done
+  for u in "$@"; do
+    case "$u" in *.*) id=$u;; *) id=$u.service;; esac
+    case " ${STUB_FAILED:-} " in *" $id "*) printf 'Id=%s\nActiveState=failed\nSubState=failed\nLoadState=loaded\n\n' "$id"; continue;; esac
+    case "$u" in
+      miniupnpd) a=failed; s=failed;;
+      llama-cpp) a=activating; s=start;;
+      *.timer) a=active; s=waiting;;
+      *) a=active; s=running;;
+    esac
+    printf 'Id=%s\nActiveState=%s\nSubState=%s\nLoadState=loaded\n\n' "$id" "$a" "$s"
+  done
+fi

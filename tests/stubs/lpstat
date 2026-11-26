@@ -1,0 +1,9 @@
+#!/bin/sh
+# CUPS status for the tests (STUB_CUPS=down makes CUPS unreachable)
+echo "lpstat $*" >> "${STUB_LOG:-/dev/null}"
+[ "$STUB_CUPS" = down ] && { echo "lpstat: Bad file descriptor" >&2; exit 1; }
+case "$1" in
+  -p) printf 'printer office is idle.  enabled since Tue 25 Nov 2026 10:00:00\nprinter photo now printing photo-7.  enabled since Tue 25 Nov 2026 10:00:00\n' ;;
+  -d) echo "system default destination: office" ;;
+  -o) printf 'photo-7                 alice           1048576   Tue 25 Nov 2026 10:05:00 AM CST\n' ;;
+esac

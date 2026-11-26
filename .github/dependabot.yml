@@ -1,0 +1,10 @@
+# Dependabot keeps the pinned GitHub Actions current (Nix inputs are updated by
+# .github/workflows/update-flake-lock.yml; Dependabot has no Nix support).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }      # let a fresh release prove itself before we take it
+    groups:
+      actions: { patterns: ["*"] }

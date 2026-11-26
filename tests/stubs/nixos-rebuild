@@ -1,0 +1,7 @@
+#!/bin/sh
+echo "nixos-rebuild switch $*" >> "$STUB_LOG"
+echo "building the system configuration..."
+sleep 0.3
+if [ -n "$STUB_FAIL" ]; then echo "error: attribute 'ceres' missing" ; exit 1; fi
+echo "activating the configuration..."
+echo "restarting the following units: kea-dhcp4-server.service, nftables.service"

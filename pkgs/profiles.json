@@ -1,0 +1,22 @@
+{
+  "_comment": "Filtering profiles: the defaults a site starts with. state.json \"profiles\" replaces this list once edited in Photosphere (Networks → Filtering profiles). Names are ids (devices and networks refer to them); labels are what people see.",
+  "settings": {
+    "global":            "Use AdGuard's own global settings instead of the switches below",
+    "filtering":         "Block ads, trackers and anything on your block lists",
+    "safeBrowsing":      "Block known malware and phishing sites",
+    "parental":          "Block adult content",
+    "safeSearch":        "Force Safe Search on Google, Bing, DuckDuckGo and others",
+    "youtubeRestricted": "YouTube Restricted Mode",
+    "blockedServices":   "Whole services to block (games, social media, streaming…)"
+  },
+  "defaults": [
+    { "name": "admin", "label": "Unfiltered", "desc": "No filtering. For your own devices and servers.",
+      "global": false, "filtering": false, "safeBrowsing": false, "parental": false, "safeSearch": false, "youtubeRestricted": false, "blockedServices": [] },
+    { "name": "adult", "label": "Standard", "desc": "Blocks ads, trackers and malware. No content limits.",
+      "global": false, "filtering": true, "safeBrowsing": true, "parental": false, "safeSearch": false, "youtubeRestricted": false, "blockedServices": [] },
+    { "name": "kid", "label": "Kids", "desc": "Adds adult-content blocking, Safe Search and YouTube Restricted Mode.",
+      "global": false, "filtering": true, "safeBrowsing": true, "parental": true, "safeSearch": true, "youtubeRestricted": true, "blockedServices": [] },
+    { "name": "default", "label": "AdGuard defaults", "desc": "Whatever AdGuard's global settings say — what unknown devices get unless their network sets a default.",
+      "global": true, "filtering": true, "safeBrowsing": true, "parental": false, "safeSearch": false, "youtubeRestricted": false, "blockedServices": [] }
+  ]
+}

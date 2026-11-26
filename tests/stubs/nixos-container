@@ -1,0 +1,13 @@
+#!/bin/sh
+# nixos-container run heliosphere -- <cmd...>; STUB_HS=fail makes everything fail
+[ "$STUB_HS" = "fail" ] && exit 1
+[ "$1" = run ] || exit 1
+shift 3
+case "$1 $2" in
+  "wg show") printf 'privkey\tSERVERPUB=\t51820\toff\nclientpub-pixel=\t(none)\t1.2.3.4:5555\t10.61.0.2/32\t1700000000\t1000\t2000\toff\n' ;;
+  "tailscale status") echo '{"Self":{"Online":true,"TailscaleIPs":["100.64.0.9","fd7a::9"]}}' ;;
+  "systemctl is-active") echo active ;;
+  "cat /run/openvpn-ingress.status") printf 'CLIENT_LIST,laptop,1.2.3.4:999,10.62.0.6\n' ;;
+  "curl -s") echo 203.0.113.9 ;;
+  *) exit 1 ;;
+esac

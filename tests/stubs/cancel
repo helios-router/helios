@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "cancel $*" >> "${STUB_LOG:-/dev/null}"

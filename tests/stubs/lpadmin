@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "lpadmin $*" >> "${STUB_LOG:-/dev/null}"

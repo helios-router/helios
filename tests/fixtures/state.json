@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "devices": [
+    { "mac": "11:22:33:44:55:66", "name": "titan", "vlan": "trusted", "ip": "10.20.0.10",
+      "profile": "admin", "blocked": false, "media": false, "notes": "test server" }
+  ],
+  "qos": { "enabled": true, "down": "500mbit", "up": "50mbit" },
+  "upnp": { "enabled": true }
+}

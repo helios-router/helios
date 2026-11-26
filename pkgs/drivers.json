@@ -1,0 +1,35 @@
+{
+  "_comment": "Built-in drivers and detection fingerprints. Optional drivers will come from the helios-drivers catalog (phase 2). See docs/drivers.md.",
+  "drivers": {
+    "manual": {
+      "label": "Manual checklist", "builtin": true, "default": true, "always": true,
+      "kinds": ["switch", "ap"], "capabilities": ["ports", "ssids"],
+      "desc": "Describe a switch or access point; HeliOS writes the setup checklist for it. Works with any hardware."
+    },
+    "local-ports": {
+      "label": "Router ports", "builtin": true, "default": true, "always": true,
+      "kinds": ["router"], "capabilities": ["ports"],
+      "desc": "Use the router's own extra Ethernet ports (or its switch chip) as access ports, trunks or the WAN port."
+    },
+    "lldp": {
+      "label": "Neighbour discovery (LLDP)", "builtin": true, "default": true,
+      "kinds": [], "capabilities": ["inventory"],
+      "desc": "Listens for switches and access points announcing themselves on the trunk. Read-only."
+    },
+    "nut": {
+      "label": "UPS (Network UPS Tools)", "builtin": true, "default": false,
+      "kinds": ["ups"], "capabilities": ["ups"],
+      "desc": "Battery status, alerts and a clean shutdown for USB UPSes from most brands. Can share the UPS with other machines."
+    }
+  },
+  "upsVendors": {
+    "051d": "APC",
+    "0764": "CyberPower",
+    "0463": "Eaton / MGE",
+    "09ae": "Tripp Lite",
+    "10af": "Liebert / Vertiv",
+    "0d9f": "PowerCOM",
+    "06da": "Phoenixtec"
+  },
+  "nutDefaults": { "shutdown": { "charge": 20, "runtime": 180 }, "server": { "enabled": false, "networks": [] } }
+}

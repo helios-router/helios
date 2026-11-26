@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "cupsdisable $*" >> "${STUB_LOG:-/dev/null}"

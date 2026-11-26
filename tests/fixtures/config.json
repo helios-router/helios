@@ -1,0 +1,15 @@
+{
+  "hostName": "helios", "domain": "home.arpa", "configDir": "/etc/nixos", "stateFile": "state.json",
+  "vlans": { "trusted": {"id": 20, "prefix": "10.20.0"}, "family": {"id": 30, "prefix": "10.30.0"},
+             "iot": {"id": 40, "prefix": "10.40.0"}, "strict": {"id": 50, "prefix": "10.50.0"},
+             "mgmt": {"id": 99, "prefix": "10.99.0"} },
+  "ifaces": ["wan", "family", "iot", "mgmt", "strict", "trusted", "tailscale0", "trunk0"],
+  "firewallTable": "heliopause",
+  "trunkMac": "02:00:00:00:00:01", "rescueMac": "02:00:00:00:00:02",
+  "services": [["kea-dhcp4-server", "DHCP"], ["adguardhome", "Magnetosphere (DNS filter)"], ["nftables", "Heliopause (firewall)"],
+               ["miniupnpd", "UPnP"], ["ntfy-sh", "Solar Wind (notifications)"]],
+  "solarWind": { "enable": true, "exposure": "local", "publicUrl": null, "lanUrl": "http://10.20.0.1:2586",
+                 "topics": { "flare": "flare", "aurora": "aurora" }, "url": "", "tokenFile": "" },
+  "heliosphere": false,
+  "reservedNames": ["helios", "heliosphere"]
+}

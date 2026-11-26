@@ -1,0 +1,7 @@
+# Every change needs the owner's review; these paths are where supply-chain attacks hide.
+*                 @helios-router/maintainers
+/.github/         @helios-router/maintainers
+/flake.nix        @helios-router/maintainers
+/flake.lock       @helios-router/maintainers
+/pkgs/*.json      @helios-router/maintainers
+/installer/       @helios-router/maintainers

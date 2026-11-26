@@ -1,0 +1,2 @@
+#!/bin/sh
+echo '{"Self":{"HostName":"helios","Online":true,"TailscaleIPs":["100.101.12.7","fd7a:115c:a1e0::5a01:c07"]},"Peer":{"a":{"Online":true},"b":{"Online":true},"c":{"Online":false}}}'

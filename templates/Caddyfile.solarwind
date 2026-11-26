@@ -1,0 +1,14 @@
+# Solar Wind behind Caddy (helios.solarWind.exposure = "proxy").
+# Runs on a machine with a public IP (e.g. a VPS) that is on the same tailnet
+# as the router. Caddy gets the TLS certificate; ntfy's streaming connections
+# work through reverse_proxy as-is.
+#
+# Replace:
+#   alerts.example.com   → the public name phones subscribe to (= helios.solarWind.publicUrl)
+#   ROUTER_TAILSCALE_IP  → the router's 100.x address (`tailscale ip -4` on the router)
+#   2586                 → helios.solarWind.port if you changed it
+# Your tailnet policy must let this proxy reach the router on that port.
+
+alerts.example.com {
+	reverse_proxy http://ROUTER_TAILSCALE_IP:2586
+}
