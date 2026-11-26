@@ -3,6 +3,7 @@
 echo "wg $*" >> "${STUB_LOG:-/dev/null}"
 case "$1" in
   genkey) echo "cHJpdmF0ZWtleS1mb3ItdGVzdHMtb25seS0wMDAwMDA=" ;;
-  pubkey) read k; echo "pub-of-$(echo "$k" | cut -c1-8)=" ;;
+  # a valid-looking key (base64 of 32 bytes) that still says what it was derived from
+  pubkey) read k; printf '%-32.32s' "pub-of-$(echo "$k" | cut -c1-8)" | base64 ;;
   *) exit 1 ;;
 esac
