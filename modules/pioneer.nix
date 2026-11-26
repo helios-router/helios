@@ -1,3 +1,4 @@
+# Pioneer: the print server (after the Pioneer plaque, the one printed page sent into space).
 # CUPS print server for USB and network printers, shared to networks with
 # "printing" access and announced over mDNS.
 #  - Printers and free drivers: state.json "printing" (Photosphere → Printing).

@@ -101,4 +101,15 @@ in
         deny 0-65535 0.0.0.0/0 0-65535
       '';
     };
+
+    # miniupnpd binds to the LAN interfaces at start. Those VLANs aren't part of
+    # network-online (RequiredForOnline = no), so wait for them explicitly;
+    # otherwise its first start fails on every boot and raises a false alert.
+    systemd.services.miniupnpd = lib.mkIf config.services.miniupnpd.enable {
+      after = [ "systemd-networkd.service" ];
+      serviceConfig.ExecStartPre = [
+        ("${config.systemd.package}/lib/systemd/systemd-networkd-wait-online --timeout=30 "
+          + lib.concatMapStringsSep " " (n: "-i ${n}:routable") upnpNets)
+      ];
+    };
 }

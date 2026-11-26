@@ -105,7 +105,7 @@ Add an object to `defaults` in `pkgs/profiles.json` with `name`, `label`, `desc`
 ### A driver
 
 1. Add the driver to `drivers` in `pkgs/drivers.json`: `label`, `builtin`, `default`, `always`, `kinds`, `capabilities`, `desc`. Vendor fingerprints such as `upsVendors` live in the same file.
-2. Put the system side in `modules/drivers.nix`, switched with `I.driverOn "<name>"`. Reuse the `sandbox` helper there for services (dynamic user, read-only system, no capabilities).
+2. Put the system side in `modules/rosetta.nix`, switched with `I.driverOn "<name>"`. Reuse the `sandbox` helper there for services (dynamic user, read-only system, no capabilities).
 3. If it needs settings or devices, extend `driver_state`, `hardware`, `hardware-set` and their validation in `helios-ctl.py`, and add a detection step if it detects hardware.
 4. Add a stub under `tests/stubs/` if it calls a new tool, and tests in `tests/test_helios_ctl.py`.
 5. Never store credentials in `state.json`. `docs/drivers.md` explains the principles (detect automatically, install only with approval, every push is a plan first).

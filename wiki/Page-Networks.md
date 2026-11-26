@@ -119,4 +119,4 @@ Anti-spoofing: on non-admin networks, packets whose source address is outside th
 - Backend: `cmd_networks` (`pkgs/helios-ctl.py:617`), `cmd_network_set` (`:652`), `cmd_network_remove` (`:746`), `clean_access` (`:635`), rename and drop helpers `hardware_rename_network` (`:2666`) and `hardware_drop_network` (`:2684`).
 - State key: `networks[]` in `state.json` (`name`, `label`, `vlan`, `prefix`, `ipv6`, `role`, `color`, `access` (overrides only), `defaultProfile`).
 - Catalog: `pkgs/networks.json` (roles, switch descriptions, default networks).
-- Router side: VLAN interfaces, addresses and IPv6 in `modules/network.nix`, DHCP pools in `modules/galileo.nix`; every firewall rule in `modules/heliopause.nix`; Tailscale routes in `modules/tailscale.nix`.
+- Router side: VLAN interfaces, addresses and IPv6 in `modules/lagrange.nix`, DHCP pools in `modules/galileo.nix`; every firewall rule in `modules/heliopause.nix`; Tailscale routes in `modules/tailscale.nix`.

@@ -107,7 +107,7 @@ Printing is shared only with networks that have the Printing access option. The 
 - `pkgs/helios-ctl.py:1634-1772`: `printing`, `printer-models` (`lpinfo -m`), `printer-set`, `printer-remove`, `printing-drivers`, `printer-test` (`lp`), `printer-pause` (`cupsdisable/cupsenable`), `print-cancel`, `printers_cleanup()` (`lpadmin -x`).
 - `pkgs/helios-ctl.py:1774-1783`: `describe_printing()` (pending bar text).
 - `pkgs/printing.json`: driver catalog (`attr` is the nixpkgs package).
-- `modules/printing.nix`: CUPS, `ipp-usb`, Avahi publishing, `hardware.printers.ensurePrinters`.
-- `modules/heliopause.nix:128`: TCP 631 for networks with printing access. `modules/network.nix:177-190`: mDNS reflection.
+- `modules/pioneer.nix`: CUPS, `ipp-usb`, Avahi publishing, `hardware.printers.ensurePrinters`.
+- `modules/heliopause.nix:128`: TCP 631 for networks with printing access. `modules/lagrange.nix:177-190`: mDNS reflection.
 - `modules/options.nix:154-159, 189-191`: `helios.printing.*` options and the printer name / single-default assertion.
 - `pkgs/services.json`: the "Print server" switch (`printing`, unit `cups`).

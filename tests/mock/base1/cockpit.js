@@ -38,7 +38,7 @@
   let lwState = {}, lwState0 = {}, lwFiles = { "model.gguf": 1107409472 }, lwDl = null,
     lwPaused = { since: T0 - 3600, until: T0 + 5 * 3600, reason: "CPU pressure 52%" };
   const svcOn = (id, over = svcOver) => (over[id] ?? SVC_DEFAULTS[id]);
-  // Printing (docs: modules/printing.nix). Live CUPS state is faked; the config part is state like the rest.
+  // Printing (docs: modules/pioneer.nix). Live CUPS state is faked; the config part is state like the rest.
   const PRN_CAT = { gutenprint: { label: "Gutenprint", desc: "Hundreds of inkjets and photo printers: Canon, Epson, HP, Lexmark and more." },
     hplip: { label: "HP (HPLIP)", desc: "HP inkjets and LaserJets that don't print driverless." }, brlaser: { label: "Brother lasers", desc: "Brother monochrome laser printers (HL-, DCP-, MFC- series)." },
     foo2zjs: { label: "foo2zjs", desc: "ZjStream and similar lasers: older HP LaserJet, Minolta, Samsung, Oki, Xerox." }, splix: { label: "SpliX", desc: "Samsung and Xerox SPL laser printers." },

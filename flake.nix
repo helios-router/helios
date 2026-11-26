@@ -40,6 +40,7 @@
       };
 
       nixosConfigurations = { inherit example installer; };
+      legacyPackages.${system}.vmTests = import ./tests/vm { inherit self; pkgs = nixpkgs.legacyPackages.${system}; };
       packages.${system} = {
         installer-iso = installer.config.system.build.isoImage;
         default = self.packages.${system}.installer-iso;

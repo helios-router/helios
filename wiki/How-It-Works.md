@@ -115,20 +115,20 @@ Not everything goes through a rebuild:
 | Module | Space name | What it does |
 |---|---|---|
 | `options.nix` | options | Declares `helios.*`, resolves networks and service switches from `state.json`, runs the build-time checks, writes `/etc/helios/config.json`. |
-| `network.nix` | network | Pins NIC names by MAC (`trunk0`, optional `rescue0`), creates the `wan` VLAN and one VLAN interface per network, Avahi, chrony for every network, sysctl hardening. With mapped router ports it builds a VLAN-aware bridge `lan0`. |
+| `lagrange.nix` | Lagrange | Pins NIC names by MAC (`trunk0`, optional `rescue0`), creates the `wan` VLAN and one VLAN interface per network, Avahi, chrony for every network, sysctl hardening. With mapped router ports it builds a VLAN-aware bridge `lan0`. |
 | `galileo.nix` | Galileo | Kea DHCP on every network (2 hour leases, router as gateway, DNS and NTP, fixed reservations for named devices) and local names `<device>.<domain>` for every named device. Named after Galileo, who named Jupiter's moons. |
 | `heliopause.nix` | Heliopause | The firewall described above. Also holds Magnetosphere's DNS hijack and bypass blocks, because nftables needs them in the same chains. |
 | `magnetosphere.nix` | Magnetosphere | Turns off systemd-resolved, points the router at 127.0.0.1, enables AdGuard Home with mutable settings. Per-device profiles are synced from `state.json` by `helios-ctl` on every apply, using `/var/lib/helios/adguard.json`. |
-| `access.nix` | access | Admin user in `wheel` with your SSH keys; SSH with keys only, no root login, no X11, 3 auth tries; password login only on the rescue address; port 22 not opened on the WAN. |
+| `airlock.nix` | Airlock | Admin user in `wheel` with your SSH keys; SSH with keys only, no root login, no X11, 3 auth tries; password login only on the rescue address; port 22 not opened on the WAN. |
 | `tailscale.nix` | tailscale | The router joins the tailnet with the configured tag, `--accept-dns=false`, `--netfilter-mode=off` (Heliopause handles `tailscale0`), optionally advertises an exit node and the `tailnet` networks as subnet routes, optionally with `--login-server` for Headscale. |
 | `heliosphere.nix` | Heliosphere | A NixOS container (`ve-heliosphere`, 10.60.0.2, host side 10.60.0.1) with the ways in and out, below. |
 | `solar-wind.nix` | Solar Wind | ntfy-sh with deny-all access, no sign-ups, 72 hour cache. A setup unit generates a write-only token for the router and a read-only phone login on first boot. Optional Tailscale Funnel unit. |
 | `photosphere.nix` | Photosphere | Installs `helios-ctl` and the Cockpit plugin, enables Cockpit on port 9090 (not opened by NixOS; Heliopause admits admin networks and Tailscale), and the timers for the outage monitor (every 30 seconds) and the nightly backup (03:17). |
 | `voyager.nix` | Voyager | QoS service `helios-sqm` (CAKE or fq_codel plus HTB on `wan`, download shaped through an `ifb4wan` mirror) and miniupnpd for UPnP and NAT-PMP with a deny list. |
 | `hubble.nix` | Hubble | Loads the Intel `iTCO_wdt` watchdog module, runs vnStat for traffic history, sets the hardware watchdog (reboot after 30 seconds of hang, force a stuck shutdown after 10 minutes). |
-| `printing.nix` | printing | CUPS shared to networks with `printing`, ipp-usb, printers from `state.json`, Avahi publishing. |
+| `pioneer.nix` | Pioneer | CUPS shared to networks with `printing`, ipp-usb, printers from `state.json`, Avahi publishing. |
 | `discovery.nix` | Discovery | Optional AI log triage (below). |
-| `drivers.nix` | drivers | Hardware detection timer, LLDP listening, UPS through Network UPS Tools, weekly vulnix scan. |
+| `rosetta.nix` | Rosetta | Hardware detection timer, LLDP listening, UPS through Network UPS Tools, weekly vulnix scan. |
 | `recovery.nix` | recovery | Restarts failed services, alerts, reboot checks and the optional reboot window. |
 
 ### Heliosphere in detail
@@ -176,6 +176,11 @@ Built-in drivers are listed in `pkgs/drivers.json`: `manual` (checklists for swi
 | Voyager | QoS and UPnP at the WAN edge |
 | Hubble | watchdog and traffic stats |
 | Discovery | AI log triage (`logwatch` in code) |
+| Galileo | DHCP and local names |
+| Lagrange | interfaces and VLANs |
+| Airlock | admin user and SSH |
+| Pioneer | print server (CUPS) |
+| Rosetta | drivers and hardware detection |
 | `helios-ctl` | the backend; JSON in, JSON out |
 | `trunk0`, `rescue0`, `wan`, `lan0` | reserved interface names: trunk NIC, rescue NIC, WAN VLAN, bridge |
 | trap | the logged drop of probes at the router's admin ports from non-admin networks |

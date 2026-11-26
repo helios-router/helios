@@ -36,7 +36,7 @@ The router is described by two files you own, `site.nix` and `state.json`, kept 
 | Hubble | hardware watchdog and traffic statistics | `hubble.nix` |
 | Discovery | optional AI log triage | `discovery.nix` |
 
-Supporting modules: `network.nix` (VLANs, mDNS, NTP), `galileo.nix` (Galileo: DHCP and local names), `access.nix` (admin user, SSH), `tailscale.nix`, `printing.nix`, `drivers.nix`, `recovery.nix`, `options.nix`. See [How It Works](How-It-Works) for each.
+Supporting modules: `lagrange.nix` (VLANs, mDNS, NTP), `galileo.nix` (Galileo: DHCP and local names), `airlock.nix` (admin user, SSH), `tailscale.nix`, `pioneer.nix`, `rosetta.nix`, `recovery.nix`, `options.nix`. See [How It Works](How-It-Works) for each.
 
 ## Wiki map
 

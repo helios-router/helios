@@ -1,3 +1,4 @@
+# Airlock: the one controlled way in.
 # Admin access: your user, SSH (keys only; password only on the physical rescue port).
 { config, lib, ... }:
 

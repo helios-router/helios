@@ -30,7 +30,7 @@ SENSITIVE = [
     (r"^flake\.(nix|lock)$", "flake inputs (what every router builds from)"),
     (r"^pkgs/[^/]+\.json$", "catalog (drivers, blocklists, models, services…)"),
     (r"^installer/", "installer (runs as root on a blank machine)"),
-    (r"^modules/(access|heliopause|recovery)\.nix$", "access control / firewall / recovery"),
+    (r"^modules/(airlock|heliopause|recovery)\.nix$", "access control / firewall / recovery"),
     (r"(^|/)CODEOWNERS$|^SECURITY\.md$", "review rules"),
 ]
 TEXT_EXT = {".nix", ".py", ".sh", ".js", ".cjs", ".mjs", ".css", ".html", ".json", ".md",

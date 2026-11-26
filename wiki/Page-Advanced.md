@@ -132,4 +132,4 @@ Result of the weekly vulnerability scan (if the service is on): total findings, 
 - `pkgs/services.json`: service catalog. `pkgs/helios-ctl.py:1517-1572`: `services`, `service-set`; `modules/options.nix:11-21` defaults.
 - `pkgs/helios-ctl.py:1069-1170`: reboot status, `maintenance-set`, `reboot`, `reboot-window`, `reboot-check`; `modules/recovery.nix:47-93`.
 - `pkgs/helios-ctl.py:1244-1510`: AI log triage commands; `pkgs/logwatch-models.json` (presets, defaults); `pkgs/logwatch.sh`; `modules/discovery.nix`.
-- `pkgs/helios-ctl.py:2863-2900` `driver-set`; `:3300-3330` `vulnix-report`; `modules/drivers.nix:153-175`.
+- `pkgs/helios-ctl.py:2863-2900` `driver-set`; `:3300-3330` `vulnix-report`; `modules/rosetta.nix:153-175`.

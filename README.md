@@ -50,12 +50,14 @@ version or reproduce. HeliOS takes the NixOS approach:
 | **Voyager** | the WAN edge: CAKE or fq_codel QoS, and UPnP / NAT-PMP only where a network allows it |
 | **Hubble** | monitoring: hardware watchdog and traffic statistics (an internet-outage monitor runs alongside Photosphere) |
 | **Discovery** | optional AI log triage: a small local language model reads warnings and notifies you about the worrying ones |
+| **Lagrange** | interfaces and VLANs: one trunk to the switch carries every network, plus the modem's VLAN |
+| **Airlock** | the way in for you: admin login, SSH with keys only, a password only on the physical rescue port |
+| **Pioneer** | optional print server (CUPS), shared only to networks you allow |
+| **Rosetta** | drivers: detects hardware and turns on support you approve (UPS, LLDP), plus a weekly vulnerability scan |
 
-Also: NTP for every network,
-Tailscale admin access and exit node (or your own Headscale server), automatic
-service recovery with alerts, a maintenance reboot window, a CUPS print server,
-hardware drivers detected and enabled on request (UPS, LLDP), and a weekly
-vulnerability scan.
+Also: NTP for every network, Tailscale admin access and exit node (or your own
+Headscale server), automatic service recovery with alerts, and a maintenance reboot
+window.
 
 ## How it works
 

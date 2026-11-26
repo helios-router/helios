@@ -56,7 +56,7 @@ The trunk and rescue ports are listed with a badge and cannot be remapped.
 
 **Save ports** (`hardware-set`) validates the list, checks the network names exist and that only one port is WAN, and stores it as a pending change. **Discard edits** appears while you are editing a suggestion. A yellow warning reminds you that changing a port can cut off whatever is plugged into it, and that you have a limited time to confirm after applying.
 
-What the router does after Apply (`modules/network.nix`):
+What the router does after Apply (`modules/lagrange.nix`):
 
 - With no access or trunk ports, the plain layout is used: one trunk NIC carries all VLANs.
 - With any access or trunk port, the router creates a VLAN-aware bridge named `lan0`. The trunk NIC and those ports join it, and the network interfaces sit on the bridge.
@@ -102,7 +102,7 @@ This card appears when a UPS is set up or the UPS driver ("UPS (Network UPS Tool
 
 **Save UPS settings** stores them (`driver-set`) as a pending change.
 
-What the router does after Apply (`modules/drivers.nix`): it runs Network UPS Tools (the UPS id is its NUT name), overrides the UPS's own low-battery thresholds with yours (whichever is reached first triggers shutdown), and listens on localhost, plus on the gateway address of each network you chose for sharing. The firewall opens port 3493 only on those networks. Events (on battery, back on mains, low battery, forced shutdown, communication lost or restored, replace battery) become notifications: urgent ones go to the flare topic, the rest to aurora. See [Notifications](Page-Notifications).
+What the router does after Apply (`modules/rosetta.nix`): it runs Network UPS Tools (the UPS id is its NUT name), overrides the UPS's own low-battery thresholds with yours (whichever is reached first triggers shutdown), and listens on localhost, plus on the gateway address of each network you chose for sharing. The firewall opens port 3493 only on those networks. Events (on battery, back on mains, low battery, forced shutdown, communication lost or restored, replace battery) become notifications: urgent ones go to the flare topic, the rest to aurora. See [Notifications](Page-Notifications).
 
 If the UPS driver was off, adding a UPS turns it on.
 
@@ -120,4 +120,4 @@ If the UPS driver was off, adding a UPS turns it on.
 - Backend: `cmd_detect` (`pkgs/helios-ctl.py:2854`), `detect_ports` (`:2740`), `detect_usb` (`:2781`), `detect_lldp` (`:2824`), `cmd_hardware` (`:3218`), `make_suggestions` (`:3118`), `cmd_hardware_set` (`:3022`), `cmd_hardware_remove` (`:3096`), `clean_ports` (`:2941`), `checklist` (`:3186`), `cmd_driver_set` (`:2863`), UPS events `cmd_ups_event` / `cmd_ups_forward` (`:3239`, `:3254`).
 - State keys: `hardware[]` (each with `id`, `kind` router/switch/ap/ups, `driver`, `label`, `notes`, `ports`, `ssids`, or `match.usb` and `nutDriver` for a UPS) and `drivers.nut` (`enabled`, `shutdown.charge`, `shutdown.runtime`, `server.enabled`, `server.networks`).
 - Driver catalog and UPS vendors: `pkgs/drivers.json`.
-- Router side: `modules/network.nix` (ports, bridge), `modules/drivers.nix` (scan timer, LLDP, NUT, event forwarding), `modules/heliopause.nix` (port 3493).
+- Router side: `modules/lagrange.nix` (ports, bridge), `modules/rosetta.nix` (scan timer, LLDP, NUT, event forwarding), `modules/heliopause.nix` (port 3493).

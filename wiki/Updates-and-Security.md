@@ -70,7 +70,7 @@ The guard reports in the job summary and fails only on findings it considers to 
 
 ### What is listed for human review (the check passes)
 
-* changes to sensitive paths: `.github/`, `flake.nix`, `flake.lock`, `pkgs/*.json` catalogs, `installer/`, `modules/access.nix`, `modules/heliopause.nix`, `modules/recovery.nix`, `CODEOWNERS`, `SECURITY.md`; and changes to the guard itself;
+* changes to sensitive paths: `.github/`, `flake.nix`, `flake.lock`, `pkgs/*.json` catalogs, `installer/`, `modules/airlock.nix`, `modules/heliopause.nix`, `modules/recovery.nix`, `CODEOWNERS`, `SECURITY.md`; and changes to the guard itself;
 * a file made executable, or an unusual file type;
 * new downloads in Nix (fetchers, `buildGoModule`, `buildNpmPackage` and similar), added content hashes;
 * process or network use in Python (`subprocess`, `os.system`, `urllib`, `requests`, `socket`), network or dynamic import in JavaScript (`fetch(`, `XMLHttpRequest`, `WebSocket`, `import(`);

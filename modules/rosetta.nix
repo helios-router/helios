@@ -1,3 +1,4 @@
+# Rosetta: drivers, the translator between HeliOS and hardware it doesn't know yet.
 # Built-in drivers (phase 1, see docs/drivers.md): LLDP neighbour discovery,
 # hardware detection, UPS via Network UPS Tools, and the weekly vulnix scan.
 # Everything here is switched on from state.json (Photosphere → Hardware).

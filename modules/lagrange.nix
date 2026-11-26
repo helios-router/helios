@@ -1,3 +1,4 @@
+# Lagrange: interfaces and VLANs, the fixed points everything else sits on.
 # Interfaces, VLANs, mDNS reflection, NTP. DHCP and local names: galileo.nix.
 # Router-on-a-stick: one NIC trunked to a managed switch carries the WAN
 # (modem on a switch port in VLAN helios.interfaces.wanVlan) and all LAN VLANs.
