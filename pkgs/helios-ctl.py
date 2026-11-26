@@ -682,7 +682,7 @@ def cmd_network_set(a):
     if not 2 <= vlan <= 4094 or vlan == WAN_VLAN:
         fail(f"VLAN id must be 2-4094 and not {WAN_VLAN} (the WAN VLAN)")
     prefix = (d.get("prefix") or "").strip()
-    if not re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\Z", prefix) or not _valid_prefix(prefix):
+    if not re.match(r"^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\Z", prefix) or not _valid_prefix(prefix):
         fail("subnet must be the first three octets of a private /24, e.g. 10.70.0 (10.60.0, 10.61.0 and 10.62.0 are Heliosphere's)")
     ipv6 = d.get("ipv6") or None
     if ipv6 is not None:
@@ -831,7 +831,7 @@ def state_dirty_except_blocked(s):
 def cmd_settings_set(a):
     with Lock():
         s = load_state()
-        rate = re.compile(r"^\d+(\.\d+)?(kbit|mbit|gbit)\Z")
+        rate = RATE_RE
         if a.down is not None:
             if not rate.match(a.down):
                 fail("download rate must look like 500mbit")
@@ -1133,7 +1133,7 @@ def cmd_maintenance_set(a):
         fail("enabled must be true or false")
     if "days" in w and (not isinstance(w["days"], list) or not w["days"] or any(x not in DAYS for x in w["days"])):
         fail("days: one or more of mon, tue, wed, thu, fri, sat, sun")
-    if "time" in w and (not isinstance(w["time"], str) or not re.match(r"^([01]\d|2[0-3]):[0-5]\d\Z", w["time"])):
+    if "time" in w and (not isinstance(w["time"], str) or not re.match(r"^([01][0-9]|2[0-3]):[0-5][0-9]\Z", w["time"])):
         fail("time must look like 04:00")
     with Lock():
         s = load_state()
@@ -1778,7 +1778,7 @@ def cmd_printer_pause(a):
 
 
 def cmd_print_cancel(a):
-    if not re.match(r"^[A-Za-z0-9_-]{1,64}-\d{1,9}\Z", a.job):
+    if not re.match(r"^[A-Za-z0-9_-]{1,64}-[0-9]{1,9}\Z", a.job):
         fail("bad job id")
     r = run(["cancel", a.job], timeout=20)
     if r.returncode != 0:
@@ -2077,7 +2077,7 @@ QOS_DEFAULTS = {"enabled": False, "down": None, "up": None, "algorithm": "cake",
 QOS_CHOICES = {"algorithm": ("cake", "fq_codel"), "link": ("docsis", "ethernet", "vdsl", "adsl", "custom"),
                "fairness": ("device", "triple", "flow"), "priority": ("diffserv4", "diffserv3", "besteffort"),
                "rtt": ("internet", "regional", "metro")}
-RATE_RE = re.compile(r"^\d+(\.\d+)?(kbit|mbit|gbit)\Z")
+RATE_RE = re.compile(r"^[0-9]+(\.[0-9]+)?(kbit|mbit|gbit)\Z")   # [0-9], not \d: no other scripts' digits
 MODEM_URL = os.environ.get("HELIOS_MODEM_URL", "http://192.168.100.1/")   # cable modems answer here
 
 
@@ -2253,7 +2253,7 @@ def parse_upnp():
 
 
 UPNP_LEASES = "/run/miniupnpd.leases"
-PORT_RANGE_RE = re.compile(r"^(\d{1,5})(?:-(\d{1,5}))?\Z")
+PORT_RANGE_RE = re.compile(r"^([0-9]{1,5})(?:-([0-9]{1,5}))?\Z")
 
 
 def _port_range(text):
@@ -3988,24 +3988,95 @@ def cmd_remote_proxy_user_remove(a):
 WG_DROP = {"dns", "postup", "preup", "postdown", "predown", "saveconfig", "table"}
 OVPN_DROP = {"up", "down", "script-security", "route-up", "route-pre-down", "ipchange", "tls-verify", "auth-user-pass-verify",
              "client-connect", "client-disconnect", "learn-address", "plugin", "management", "up-restart", "down-pre",
-             "dns-updown", "setenv", "setenv-safe", "push", "push-reset", "daemon", "user", "group"}
+             "dns-updown", "setenv", "setenv-safe", "push", "push-reset", "daemon", "user", "group",
+             "engine", "tls-crypt-v2-verify", "client-crresponse"}
 OVPN_PATHS = {"ca", "cert", "key", "dh", "pkcs12", "tls-auth", "tls-crypt", "tls-crypt-v2", "secret", "crl-verify", "extra-certs",
-              "config", "cd", "chroot", "writepid", "log", "log-append", "status", "ifconfig-pool-persist", "askpass", "http-proxy-user-pass"}
+              "config", "cd", "chroot", "writepid", "log", "log-append", "status", "ifconfig-pool-persist", "askpass", "http-proxy-user-pass",
+              "capath", "tmp-dir", "iproute", "pkcs11-providers", "replay-persist", "dev-node", "tls-export-cert",
+              "client-config-dir", "auth-gen-token-secret", "port-share"}
+# Options OpenVPN takes as an inline <tag>…</tag> block (file contents, never a path)
+OVPN_INLINE = {"ca", "cert", "key", "dh", "pkcs12", "tls-auth", "tls-crypt", "tls-crypt-v2", "secret", "crl-verify",
+               "extra-certs", "http-proxy-user-pass", "auth-user-pass"}
+OVPN_LINE_MAX = 255          # OpenVPN reads lines into a 256-byte buffer and splits longer ones
+UPLOAD_CTRL_RE = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")   # inside a line (the text is split on \n first)
+
+
+def ovpn_tokens(line):
+    """Split a config line the way OpenVPN's parse_line() does; None where OpenVPN would refuse it.
+
+    Unquoted, "double" and 'single' quoted tokens; a backslash escapes \\, " or a space (OpenVPN
+    rejects any other escape) except inside single quotes; # or ; starting a token ends the line."""
+    toks, cur, state, esc = [], [], "init", False
+    for c in line:
+        if esc:
+            if c not in "\\\" \t":
+                return None
+            cur.append(c)
+            esc = False
+            state = "bare" if state == "init" else state
+            continue
+        if c == "\\" and state != "squote":
+            esc = True
+            continue
+        if state == "init":
+            if c in " \t":
+                continue
+            if c in "#;":
+                break
+            if c in "\"'":
+                state = "dquote" if c == '"' else "squote"
+            else:
+                cur.append(c)
+                state = "bare"
+        elif state == "bare":
+            if c in " \t":
+                toks.append("".join(cur))
+                cur, state = [], "init"
+            else:
+                cur.append(c)
+        elif c == ('"' if state == "dquote" else "'"):
+            if not cur:
+                return None                              # "" : leave the corner case to nobody
+            toks.append("".join(cur))
+            cur, state = [], "init"
+        else:
+            cur.append(c)
+    if esc or state in ("dquote", "squote"):
+        return None
+    if state == "bare":
+        toks.append("".join(cur))
+    return toks
+
+
+def ovpn_quote(tok):
+    if re.fullmatch(r"[^\s\"'\\#;]+", tok):
+        return tok
+    return '"' + tok.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def upload_lines(text, what, limit=None):
+    lines = text.split("\n")
+    for n, line in enumerate(lines, 1):
+        if UPLOAD_CTRL_RE.search(line):
+            fail(f"line {n} of the {what} has a control character")
+        if limit and len(line.encode()) > limit:
+            fail(f"line {n} of the {what} is longer than {limit} bytes")
+    return lines
 
 
 def clean_wg_conf(text):
     section, keep, dropped, seen = None, [], [], {}
-    for line in text.splitlines():
+    for line in upload_lines(text, "WireGuard config"):
         # wg-quick strips "#…" before it looks at a line, so judge what it will see
         st = line.split("#", 1)[0].strip()
-        m = re.match(r"^\[(\w+)\]\Z", st)
+        m = re.match(r"^\[([A-Za-z]+)\]\Z", st)
         if m:
             section = m.group(1).lower()
             keep.append(line)
             continue
         if st.startswith("["):
             fail(f"unexpected line in the WireGuard config: {st[:60]!r}")
-        k = st.split("=", 1)[0].strip().lower() if "=" in st else ""
+        k = st.split("=", 1)[0].strip().lower()        # wg-quick takes a line without "=" as a key too
         if k and not section:
             fail("the WireGuard config has settings before its [Interface] section")
         if section and k:
@@ -4021,41 +4092,82 @@ def clean_wg_conf(text):
 
 
 def clean_ovpn_conf(text):
-    keep, dropped, block, flags = [], [], None, set()
-    for line in text.splitlines():
-        st = line.strip()
+    """Keep a provider's client config minus anything that runs programs or reads/writes files.
+
+    Lines are judged the way OpenVPN reads them (ovpn_tokens), and every kept directive is
+    written back canonically quoted, so what is stored means one thing to OpenVPN."""
+    keep, dropped, flags = [], [], set()
+    block, conn = None, False          # open inline <block>; inside a <connection> block
+    for line in upload_lines(text, "OpenVPN config", OVPN_LINE_MAX):
+        st = line.strip(" \t")
         if block:
-            keep.append(line)
-            if st == f"</{block}>":
+            # OpenVPN ends an inline block at the first line that STARTS with </tag>
+            if st.startswith(f"</{block}>"):
+                keep.append(f"</{block}>")
                 block = None
+            else:
+                keep.append(line)
             continue
-        m = re.match(r"^<(\w[\w-]*)>\Z", st)
-        if m:
-            block = m.group(1)
-            keep.append(line)
+        if conn and st.startswith("</connection>"):  # read like an inline block's end, too
+            conn = False
+            keep.append("</connection>")
             continue
         if not st or st[0] in "#;":
             keep.append(line)
             continue
-        parts = st.split()
-        # OpenVPN un-quotes/un-escapes tokens and accepts "--up" as "up" in config files
-        k = re.sub(r"[\\\"']", "", parts[0]).lower()
-        k = k[2:] if k.startswith("--") else k
-        if k in OVPN_DROP:
+        # A loose reading first: anything that might be a dropped directive goes, however it's spelled
+        loose = re.sub(r"[\\\"']", "", st.split()[0]).lower()
+        loose = loose[2:] if loose.startswith("--") else loose
+        if loose in OVPN_DROP or loose.startswith("management"):
+            dropped.append(loose)
+            continue
+        toks = ovpn_tokens(st)
+        if toks is None:
+            fail(f"can't read this line of the OpenVPN config (quotes or backslashes): {st[:60]!r}")
+        if not toks:
+            keep.append(line)                  # only a comment after all
+            continue
+        if toks[0].startswith("--"):
+            toks[0] = toks[0][2:]
+        k = toks[0].lower()
+        if len(toks) == 1 and len(k) >= 2 and k[0] == "<" and k[-1] == ">":
+            tag = toks[0][1:-1]
+            if tag.startswith("/"):
+                fail(f"unexpected {toks[0]!r} in the OpenVPN config")
+            if tag == "connection" and not conn:
+                conn = True
+                keep.append("<connection>")
+                continue
+            if conn:
+                fail("inline blocks inside a <connection> block aren't supported")
+            if tag not in OVPN_INLINE:
+                fail(f"inline <{tag[:40]}> blocks aren't supported")
+            block = tag
+            keep.append(f"<{tag}>")
+            continue
+        if k in OVPN_DROP or k.startswith("management"):
             dropped.append(k)
             continue
-        if k in ("http-proxy", "socks-proxy") and len(parts) > 3:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", toks[0]):
+            fail(f"not an OpenVPN option: {toks[0][:40]!r}")
+        if k in ("http-proxy", "socks-proxy") and len(toks) > 3:
             fail(f"“{k}” with a credentials file isn't supported; remove the file argument")
-        if k in OVPN_PATHS:
+        if k in OVPN_PATHS or loose in OVPN_PATHS:
             fail(f"“{k}” refers to a file on disk; paste its contents inline (<{k}>…</{k}>) or remove it")
-        if k == "auth-user-pass" and len(parts) > 1:
-            keep.append(f"auth-user-pass {HS_EGRESS_AUTH_PATH}")
-            flags.add(k)
-            continue
+        if k == "providers" and not all(re.fullmatch(r"[A-Za-z0-9_-]+", x) for x in toks[1:]):
+            fail("“providers” takes OpenSSL provider names (like legacy default), not paths")
         flags.add(k)
-        keep.append(line)
+        if k == "auth-user-pass" and len(toks) > 1:
+            keep.append(f"auth-user-pass {HS_EGRESS_AUTH_PATH}")
+            continue
+        canon = " ".join(ovpn_quote(x) for x in toks)
+        if len(canon.encode()) > OVPN_LINE_MAX:       # quoting made it longer: OpenVPN would split it
+            fail(f"a line of the OpenVPN config is too long once quoted: {st[:60]!r}")
+        keep.append(canon)
     if block:
         fail(f"unterminated <{block}> block")
+    if conn:
+        fail("unterminated <connection> block")
     if "client" not in flags:
         fail("the OpenVPN config must be a client config (a “client” line)")
     if "remote" not in flags:
@@ -4063,38 +4175,41 @@ def clean_ovpn_conf(text):
     return "\n".join(keep).strip() + "\n", dropped
 
 
-def cmd_remote_egress_upload(a):
-    text = sys.stdin.read()
-    if len(text) > 64 * 1024 or "\0" in text:
+def egress_upload(kind, raw):
+    """(file name, contents, dropped directives) for an uploaded way-out file; fail() on bad input."""
+    if len(raw) > 64 * 1024 or b"\0" in raw:
         fail("That doesn't look like a configuration file (too big or binary)")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        fail("That doesn't look like a configuration file (not UTF-8 text)")
     text = text.replace("\r\n", "\n")
-    if a.kind == "wireguard":
+    if kind == "wireguard":
         body, dropped = clean_wg_conf(text)
-        hs_write(hs_path("egress", "wg-out.conf"), body)
-        name = "wg-out.conf"
-    elif a.kind == "openvpn":
+        return "wg-out.conf", body, dropped
+    if kind == "openvpn":
         body, dropped = clean_ovpn_conf(text)
-        hs_write(hs_path("egress", "client.ovpn"), body)
-        name = "client.ovpn"
-    else:
-        dropped = []
-        if text.strip().startswith("{"):                # proxy credentials
-            try:
-                j = json.loads(text)
-            except ValueError:
-                fail("invalid JSON")
-            if not isinstance(j, dict) or set(j) - {"user", "password"}:
-                fail("proxy credentials are {\"user\": …, \"password\": …}")
-            if not all(isinstance(j.get(k), str) and 0 < len(j[k]) <= 255 and "\n" not in j[k] for k in ("user", "password")):
-                fail("user and password must be non-empty text (max 255 characters, one line)")
-            hs_write(hs_path("egress", "proxy.json"), json.dumps({"user": j["user"], "password": j["password"]}) + "\n")
-            name = "proxy.json"
-        else:
-            lines = [x for x in text.splitlines() if x.strip()]
-            if len(lines) != 2 or any(len(x) > 255 for x in lines):
-                fail("auth.txt is two lines: the user name, then the password")
-            hs_write(hs_path("egress", "auth.txt"), "\n".join(x.rstrip() for x in lines) + "\n")
-            name = "auth.txt"
+        return "client.ovpn", body, dropped
+    if text.strip().startswith("{"):                # proxy credentials
+        try:
+            j = json.loads(text)
+        except ValueError:
+            fail("invalid JSON")
+        if not isinstance(j, dict) or set(j) - {"user", "password"}:
+            fail("proxy credentials are {\"user\": …, \"password\": …}")
+        if not all(isinstance(j.get(k), str) and 0 < len(j[k]) <= 255 and not UPLOAD_CTRL_RE.search(j[k].replace("\t", " "))
+                   for k in ("user", "password")):
+            fail("user and password must be non-empty text (max 255 characters, one line, no control characters)")
+        return "proxy.json", json.dumps({"user": j["user"], "password": j["password"]}) + "\n", []
+    lines = [x for x in upload_lines(text, "auth.txt") if x.strip()]
+    if len(lines) != 2 or any(len(x) > 255 for x in lines):
+        fail("auth.txt is two lines: the user name, then the password")
+    return "auth.txt", "\n".join(x.rstrip() for x in lines) + "\n", []
+
+
+def cmd_remote_egress_upload(a):
+    name, body, dropped = egress_upload(a.kind, sys.stdin.buffer.read())
+    hs_write(hs_path("egress", name), body)
     out({"ok": True, "stored": name, "removedDirectives": sorted(set(dropped))})
 
 

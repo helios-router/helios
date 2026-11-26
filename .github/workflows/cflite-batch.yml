@@ -1,0 +1,35 @@
+# ClusterFuzzLite batch fuzzing: a longer weekly run over every helios-ctl
+# harness (tests/fuzz). The grown corpus is kept as a run artifact, which PR
+# fuzzing (cflite-pr.yml) starts from; a crash fails the job.
+name: Fuzzing (weekly)
+on:
+  schedule:
+    - cron: "17 3 * * 1"             # Mondays 03:17 UTC
+  workflow_dispatch:
+permissions: { contents: read }
+concurrency:
+  group: cflite-batch
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    name: ClusterFuzzLite (batch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read                  # fetch the previous run's corpus artifact
+    steps:
+      - name: Build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: python
+          sanitizer: address
+          github-token: ${{ github.token }}
+      - name: Run fuzzers
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          mode: batch
+          sanitizer: address
+          fuzz-seconds: 3600          # shared by all harnesses
+          github-token: ${{ github.token }}

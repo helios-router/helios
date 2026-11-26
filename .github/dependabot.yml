@@ -16,3 +16,11 @@ updates:
     directory: /tests/ci
     schedule: { interval: weekly }
     cooldown: { default-days: 7 }
+  - package-ecosystem: pip             # tests/fuzz/requirements.txt (Atheris for local fuzzing)
+    directory: /tests/fuzz
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+  - package-ecosystem: docker          # .clusterfuzzlite/Dockerfile (base image pinned by digest)
+    directory: /.clusterfuzzlite
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
