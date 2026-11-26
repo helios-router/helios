@@ -10,44 +10,45 @@
     "upnp":     "Devices may open ports with UPnP / NAT-PMP",
     "cast":     "May reach devices marked \"media\" (TVs) on other networks",
     "forceNtp": "Hard-coded NTP servers are redirected to the router",
-    "tailnet":  "Advertised to your tailnet as a subnet route"
+    "tailnet":  "Advertised to your tailnet as a subnet route",
+    "quarantine": "Devices you haven't named yet only get internet (filtered), never other networks or the router's admin pages"
   },
   "roles": {
     "trusted": {
       "label": "Trusted", "color": "#257de0", "names": "inner",
       "desc": "Your own devices and servers — reaches everything",
       "access": { "admin": true, "internet": true, "reach": "all", "filtered": false, "mdns": true, "printing": true,
-                  "upnp": true, "cast": true, "forceNtp": false, "tailnet": true }
+                  "upnp": true, "cast": true, "forceNtp": false, "tailnet": true, "quarantine": true }
     },
     "family": {
       "label": "Family", "color": "#f47230", "names": "inner",
       "desc": "Household devices — internet only, filtered per device",
       "access": { "admin": false, "internet": true, "reach": [], "filtered": true, "mdns": true, "printing": true,
-                  "upnp": true, "cast": true, "forceNtp": false, "tailnet": true }
+                  "upnp": true, "cast": true, "forceNtp": false, "tailnet": true, "quarantine": true }
     },
     "iot": {
       "label": "IoT", "color": "#00b894", "names": "kuiper",
       "desc": "Gadgets — internet only, isolated from the LAN",
       "access": { "admin": false, "internet": true, "reach": [], "filtered": true, "mdns": true, "printing": false,
-                  "upnp": false, "cast": false, "forceNtp": true, "tailnet": true }
+                  "upnp": false, "cast": false, "forceNtp": true, "tailnet": true, "quarantine": false }
     },
     "guest": {
       "label": "Guest", "color": "#8e6ad8", "names": "inner",
       "desc": "Visitors — internet only, nothing else",
       "access": { "admin": false, "internet": true, "reach": [], "filtered": true, "mdns": false, "printing": false,
-                  "upnp": false, "cast": false, "forceNtp": false, "tailnet": false }
+                  "upnp": false, "cast": false, "forceNtp": false, "tailnet": false, "quarantine": false }
     },
     "strict": {
       "label": "Strict", "color": "#f2a600", "names": "inner",
       "desc": "Unknown wired ports — maximum filtering",
       "access": { "admin": false, "internet": true, "reach": [], "filtered": true, "mdns": false, "printing": true,
-                  "upnp": false, "cast": false, "forceNtp": false, "tailnet": false }
+                  "upnp": false, "cast": false, "forceNtp": false, "tailnet": false, "quarantine": false }
     },
     "mgmt": {
       "label": "Mgmt", "color": "#ee7fac", "names": "kuiper",
       "desc": "Switch and AP admin pages — no internet",
       "access": { "admin": true, "internet": false, "reach": [], "filtered": false, "mdns": false, "printing": false,
-                  "upnp": false, "cast": false, "forceNtp": false, "tailnet": true }
+                  "upnp": false, "cast": false, "forceNtp": false, "tailnet": true, "quarantine": true }
     }
   },
   "defaults": [

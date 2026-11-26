@@ -385,3 +385,4 @@ th.pause-col, td.pause-col { width: 1%; padding-right: 0; }
 .btn-icon.state-running::before, .btn-icon.state-paused::before { content: ""; display: inline-block; flex: none; }
 .btn-icon.state-running::before { border-left: 9px solid currentColor; border-top: 5.5px solid transparent; border-bottom: 5.5px solid transparent; margin-left: 2px; }
 .btn-icon.state-paused::before { width: 3px; height: 10px; border-left: 3px solid currentColor; border-right: 3px solid currentColor; }
+.badge.restricted { background: var(--warn-soft); color: var(--warn); }

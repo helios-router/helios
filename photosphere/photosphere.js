@@ -561,7 +561,8 @@ function viewDevices(root) {
   const newToggle = h("label", { class: "switch" }, h("input", { type: "checkbox", checked: devFilter.onlyNew,
     onchange: ev => { devFilter.onlyNew = ev.target.checked; draw(); } }), "New only");
   const countEl = h("span", { class: "muted small" });
-  root.append(h("section", { class: "card" },
+  const restrictBox = h("div");
+  root.append(restrictBox, h("section", { class: "card" },
     h("div", { class: "toolbar" }, chipsBox, h("span", { class: "spacer" }), newToggle, search),
     h("div", { class: "table-wrap" }, h("table", {},
       h("thead", {}, h("tr", {}, h("th", { class: "pause-col", "aria-label": "Pause" }), h("th", {}, "Device"), h("th", {}, "Network"), h("th", {}, "IP address"),
@@ -605,6 +606,7 @@ function viewDevices(root) {
             h("div", { class: "primary" }, d.known ? d.name : h("span", { class: "unnamed" }, d.hostname || "Unknown device"),
               !d.known ? h("span", { class: "badge new" }, "NEW") : null,
               d.blocked ? h("span", { class: "badge paused" }, "PAUSED") : null,
+              d.restricted ? h("span", { class: "badge restricted", title: "Not named yet: filtered internet only, no other networks or admin pages. Name it and apply to lift this." }, "RESTRICTED") : null,
               d.media ? h("span", { class: "badge media", title: "May reach media servers" }, "Media") : null,
               d.mediaServer ? h("span", { class: "badge media", title: "Serves media: " + describePorts(d.mediaServer) }, "Media server") : null),
             h("div", { class: "secondary" }, d.known ? (d.notes || d.hostname || "") : "Not named yet")))),
@@ -623,7 +625,25 @@ function viewDevices(root) {
     if (!r.live) toast(`Saved, but the live firewall update failed: ${r.note}`, true);
     load(); refreshPending();
   }).catch(e => toast(e.message, true));
-  const load = () => api("devices").then(r => { devices = r.devices; setProfiles(r.profiles); draw(); }).catch(e => toast(e.message, true));
+  const drawRestrict = ru => {
+    if (!ru) return restrictBox.replaceChildren();
+    const nets = ru.networks.map(n => netInfo(n).label).join(", ");
+    const unnamed = devices.filter(d => !d.known && ru.networks.includes(d.lease_vlan || d.vlan));
+    const set = on => api("restrict-unnamed", on ? "on" : "off").then(() => { toast(`Restricting unnamed devices ${on ? "on" : "off"} — apply to activate`); refreshPending(); load(); }).catch(e => toast(e.message, true));
+    if (!ru.enabled) return restrictBox.replaceChildren(h("div", { class: "alert alert-info small", style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap" },
+      h("span", { style: "flex:1;min-width:16em" }, h("strong", {}, "New devices get full access. "), `Anything that joins ${nets} can use it like a named device until you notice. HeliOS can limit unnamed devices to filtered internet until you name them.`),
+      h("button", { class: "btn btn-secondary btn-sm", onclick: () => modal({ title: "Restrict unnamed devices?", body: [
+          h("p", {}, `Devices you haven't named on ${nets} will only get filtered internet: no other networks, no router admin pages. Naming a device and applying lifts it.`),
+          unnamed.length ? [h("p", { style: "margin-bottom:4px" }, h("strong", {}, `${unnamed.length} device${unnamed.length === 1 ? "" : "s"} would be restricted now:`)),
+            h("ul", { class: "small", style: "margin-top:0" }, unnamed.map(d => h("li", {}, `${d.hostname || d.mac} on ${netInfo(d.lease_vlan || d.vlan).label}`)))] : h("p", { class: "muted" }, "No unnamed devices on those networks right now."),
+          h("div", { class: "alert alert-warn small" }, h("strong", {}, "Name the device you're using first. "), "Otherwise this page stops working for you when you apply; it rolls back by itself after two minutes if you can't confirm. Tailscale and the rescue port are never restricted.")],
+        foot: close => [h("button", { class: "btn btn-primary", onclick: () => { close(); set(true); } }, "Restrict unnamed devices"), h("button", { class: "btn btn-link", onclick: close }, "Cancel")] }) }, "Restrict unnamed devices…")));
+    if (ru.waitingForAdmin) return restrictBox.replaceChildren(h("div", { class: "alert alert-warn small" }, h("strong", {}, "Unnamed-device restriction is waiting. "),
+      "It starts once at least one device on an admin network (like Trusted) is named, so you can't lock yourself out."));
+    restrictBox.replaceChildren(h("div", { class: "muted small", style: "margin:0 0 10px" }, `Unnamed devices on ${nets} only get filtered internet until you name them. `,
+      h("button", { class: "btn btn-link btn-sm", style: "padding:0", onclick: () => set(false) }, "Turn off")));
+  };
+  const load = () => api("devices").then(r => { devices = r.devices; setProfiles(r.profiles); draw(); drawRestrict(r.restrictUnnamed); }).catch(e => toast(e.message, true));
   load();
   every(15000, load);
 }
@@ -1084,7 +1104,7 @@ function viewSolarWind(root) {
 // Short labels for the access flags, in display order
 const ACCESS_UI = [
   ["admin", "Admin"], ["internet", "Internet"], ["filtered", "Filtered DNS"], ["mdns", "mDNS"], ["printing", "Printing"],
-  ["upnp", "UPnP"], ["cast", "Cast to TVs"], ["forceNtp", "Forced NTP"], ["tailnet", "On tailnet"],
+  ["upnp", "UPnP"], ["cast", "Cast to TVs"], ["forceNtp", "Forced NTP"], ["tailnet", "On tailnet"], ["quarantine", "Restrict unnamed"],
 ];
 const reachText = n => n.access.reach === "all" ? "Every network"
   : n.access.reach.length ? n.access.reach.map(r => netInfo(r).label).join(", ") : "No other network";

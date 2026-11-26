@@ -33,6 +33,7 @@
   const SCAT = (() => { const x = new XMLHttpRequest(); x.open("GET", "../services.json", false); x.send(); return JSON.parse(x.responseText); })();
   const SVC_DEFAULTS = { notifications: true, vulnScan: true, printing: true, remote: true, logwatch: false };
   let svcOver = {}, svcOver0 = {};
+  let restrictUnnamed = false, restrictUnnamed0 = false;
   let maint = { rebootWindow: { enabled: false, days: ["sun"], time: "04:00" } }, maint0 = JSON.parse(JSON.stringify(maint));
   let lwState = {}, lwState0 = {}, lwFiles = { "model.gguf": 1107409472 }, lwDl = null,
     lwPaused = { since: T0 - 3600, until: T0 + 5 * 3600, reason: "CPU pressure 52%" };
@@ -314,6 +315,7 @@
       if (a !== b) msgs.push(`${b ? "Turn on" : "Turn off"} ${m.label}`); else if ((svcOver0[id] ?? null) !== (svcOver[id] ?? null)) msgs.push(svcOver[id] === undefined ? `${m.label}: follow site.nix` : `${m.label}: pin ${b ? "on" : "off"}`); }
     if (JSON.stringify(lwState0) !== JSON.stringify(lwState)) msgs.push(Object.keys(lwState).length ? "Change AI log triage settings" : "AI log triage: back to defaults");
     if (JSON.stringify(maint0) !== JSON.stringify(maint)) msgs.push(maint.rebootWindow.enabled ? `Reboot window: ${maint.rebootWindow.days.join(", ")} ${maint.rebootWindow.time}` : "Reboot window off");
+    if (restrictUnnamed !== restrictUnnamed0) msgs.push(`Restrict unnamed devices: ${restrictUnnamed ? "on" : "off"}`);
     return msgs.concat(remoteChanges());
   }
   const tin = (rate, sent, avg, peak, drops, ecn) => ({ threshold_rate: rate, sent_bytes: sent, sent_packets: Math.round(sent / 900), drops, ecn_mark: ecn, ack_drops: 0, peak_delay_us: peak, avg_delay_us: avg, base_delay_us: 6, sparse_flows: 2, bulk_flows: 1, backlog_bytes: 0 });
@@ -507,7 +509,12 @@
         if (kind === remote.egress.mode || kind === remote0.egress.mode) return { ok: false, error: `the way out is set to ${kind}; switch to Direct first` };
         egressFiles[kind] = false; return { ok: true };
       }
-      case "devices": return { ok: true, devices: devicesOut(), dirty: changes().length > 0, profiles: profiles.map(({ name, label, desc }) => ({ name, label, desc })) };
+      case "restrict-unnamed": restrictUnnamed = rest[0] === "on"; return { ok: true, dirty: true };
+      case "devices": {
+        const qn = networks.filter(n => access(n).quarantine).map(n => n.name), armed = restrictUnnamed && devices.some(d => access(networks.find(n => n.name === d.vlan) || networks[0]).admin);
+        return { ok: true, devices: devicesOut().map(d => ({ ...d, restricted: armed && !d.known && qn.includes(d.lease_vlan || d.vlan) })), dirty: changes().length > 0,
+          restrictUnnamed: { enabled: restrictUnnamed, armed, waitingForAdmin: restrictUnnamed && !armed, networks: qn }, profiles: profiles.map(({ name, label, desc }) => ({ name, label, desc })) };
+      }
       case "profiles": return { ok: true, settings: PCAT.settings, dirty: changes().length > 0,
         adguard: { reachable: true, configured: true, version: "v0.107.63", protection: true, services: AG_SERVICES },
         profiles: profiles.map(p_ => ({ ...p_, devices: devices.filter(d => (d.profile || "default") === p_.name).map(d => d.name), networks: networks.filter(n => n.defaultProfile === p_.name).map(n => n.name) })) };
@@ -557,14 +564,14 @@
         return { ok: true };
       }
       case "pending": { const c = changes(); return { ok: true, dirty: c.length > 0, changes: c, apply }; }
-      case "discard": maint = JSON.parse(JSON.stringify(maint0)); lwState = JSON.parse(JSON.stringify(lwState0)); svcOver = { ...svcOver0 }; printing = JSON.parse(JSON.stringify(printing0)); devices.length = 0; committed.forEach(d => devices.push({ ...d })); profiles = JSON.parse(JSON.stringify(profiles0)); networks = JSON.parse(JSON.stringify(networks0)); qos = { ...qos0 }; upnp = { ...upnp0 }; drivers = JSON.parse(JSON.stringify(drivers0)); hardware = JSON.parse(JSON.stringify(hardware0)); remote = JSON.parse(JSON.stringify(remote0)); return { ok: true };
+      case "discard": restrictUnnamed = restrictUnnamed0; maint = JSON.parse(JSON.stringify(maint0)); lwState = JSON.parse(JSON.stringify(lwState0)); svcOver = { ...svcOver0 }; printing = JSON.parse(JSON.stringify(printing0)); devices.length = 0; committed.forEach(d => devices.push({ ...d })); profiles = JSON.parse(JSON.stringify(profiles0)); networks = JSON.parse(JSON.stringify(networks0)); qos = { ...qos0 }; upnp = { ...upnp0 }; drivers = JSON.parse(JSON.stringify(drivers0)); hardware = JSON.parse(JSON.stringify(hardware0)); remote = JSON.parse(JSON.stringify(remote0)); return { ok: true };
       case "apply-start": apply = { state: "running", started: t, changes: changes() }; setTimeout(() => { apply = { ...apply, state: "confirm", deadline: T() + 120 }; }, 2500); return { ok: true };
       case "apply-status": return { ok: true, apply: { ...apply, remaining: apply.deadline ? Math.max(0, apply.deadline - T()) : undefined }, log: [
         "[10:41:02] nixos-rebuild switch …", "building the system configuration...", "these 4 derivations will be built:",
         "  /nix/store/9xk2…-kea-dhcp4.conf.drv", "  /nix/store/1mfa…-nftables-rules.drv", "  /nix/store/q8c1…-hosts.drv", "  /nix/store/vz0d…-nixos-system-sol-25.11.drv",
         "activating the configuration...", "setting up /etc...", "reloading the following units: nftables.service", "restarting the following units: kea-dhcp4-server.service",
         ...(apply.state === "confirm" ? ["[10:41:39] Syncing AdGuard client profiles …", "[10:41:39] Magnetosphere (AdGuard): 1 added, 15 updated, 0 removed", "[10:41:39] Applied. Waiting for confirmation (auto-rollback in 120s)."] : [])] };
-      case "confirm": maint0 = JSON.parse(JSON.stringify(maint)); lwState0 = JSON.parse(JSON.stringify(lwState)); svcOver0 = { ...svcOver }; printing0 = JSON.parse(JSON.stringify(printing)); committed = JSON.parse(JSON.stringify(devices)); profiles0 = JSON.parse(JSON.stringify(profiles)); networks0 = JSON.parse(JSON.stringify(networks)); qos0 = { ...qos }; upnp0 = { ...upnp }; drivers0 = JSON.parse(JSON.stringify(drivers)); hardware0 = JSON.parse(JSON.stringify(hardware)); remote0 = JSON.parse(JSON.stringify(remote)); apply = { state: "done" }; return { ok: true };
+      case "confirm": restrictUnnamed0 = restrictUnnamed; maint0 = JSON.parse(JSON.stringify(maint)); lwState0 = JSON.parse(JSON.stringify(lwState)); svcOver0 = { ...svcOver }; printing0 = JSON.parse(JSON.stringify(printing)); committed = JSON.parse(JSON.stringify(devices)); profiles0 = JSON.parse(JSON.stringify(profiles)); networks0 = JSON.parse(JSON.stringify(networks)); qos0 = { ...qos }; upnp0 = { ...upnp }; drivers0 = JSON.parse(JSON.stringify(drivers)); hardware0 = JSON.parse(JSON.stringify(hardware)); remote0 = JSON.parse(JSON.stringify(remote)); apply = { state: "done" }; return { ok: true };
       case "rollback": apply = { state: "rolledback", message: "Rolled back" }; return { ok: true };
       case "apply-dismiss": apply = {}; return { ok: true };
       case "counters": {
