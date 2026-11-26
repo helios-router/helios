@@ -370,7 +370,8 @@ textarea { resize: vertical; }
 .name-cell .primary { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 /* Tabs in columns: the advanced tabs sit in a second row under the main tab they belong with */
 .tabs { flex-wrap: nowrap; align-items: flex-start; }
-.tab-col { display: flex; flex-direction: column; align-items: flex-start; }
+.tab-col { display: flex; flex-direction: column; align-items: center; }
+.tab-top { display: flex; gap: 4px; }
 .tab-sub { display: flex; gap: 4px; margin-top: 2px; }
 .tab-sub:not(:has(a:not([hidden]))) { display: none; }
 .tab-sub a { font-size: 13px; padding: 6px 14px 7px; white-space: nowrap; }
