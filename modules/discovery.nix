@@ -56,7 +56,18 @@ let
     text = builtins.readFile ../pkgs/logwatch.sh;
   };
 in
-lib.mkIf (cfg.internal.on "logwatch") {
+lib.mkMerge [
+# Always: a preset can be downloaded before logwatch is switched on. llama-cpp runs as a
+# DynamicUser, so it reads the model through this group (0750 folder, 0640 files), not because
+# the model is world-readable. z only touches what already exists.
+{
+  users.groups.llm = { };
+  systemd.tmpfiles.rules = [
+    "z /var/lib/llm 0750 root llm -"
+    "z /var/lib/llm/*.gguf 0640 root llm -"
+  ];
+}
+(lib.mkIf (cfg.internal.on "logwatch") {
   hardware.graphics.enable = lib.mkIf (lw.backend == "vulkan") true;
 
   services.llama-cpp = lib.mkIf local {
@@ -89,7 +100,7 @@ lib.mkIf (cfg.internal.on "logwatch") {
     wantedBy = lib.mkIf (!st.keepLoaded) (lib.mkForce [ ]);
     serviceConfig = {
       Slice = "helios-ai.slice";
-      SupplementaryGroups = [ "render" "video" ];   # /dev/dri/renderD128
+      SupplementaryGroups = [ "render" "video" "llm" ];   # /dev/dri/renderD128, /var/lib/llm
       CPUQuota = "${toString st.cpuPercent}%";
       Nice = 19;
       OOMScoreAdjust = 900;
@@ -146,4 +157,5 @@ lib.mkIf (cfg.internal.on "logwatch") {
     wantedBy = [ "timers.target" ];
     timerConfig = { OnBootSec = "2min"; OnUnitActiveSec = "1min"; AccuracySec = "10s"; };
   };
-}
+})
+]

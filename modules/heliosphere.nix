@@ -34,15 +34,26 @@ let
   ingressIf = { tailscale = "tailscale0"; wireguard = "wg-in"; openvpn = "tun-in"; };
   lanAny = lib.unique (lib.concatMap lanOf [ "tailscale" "wireguard" "openvpn" ]);
   allLans = map netOf cfg.internal.names;
+  ovpnGid = 1194;   # fixed, so host and container agree on who owns crl.pem
 in
 lib.mkIf (cfg.internal.on "remote") {
+  # OpenVPN in the container drops to nobody:heliosphere-ovpn and re-reads crl.pem on each new
+  # client, so the server side is 0750/0640 to this group instead of world-readable. Same gid
+  # here and in the container (no user namespace), so the bind mount keeps the group.
+  users.groups.heliosphere-ovpn.gid = ovpnGid;
   systemd.tmpfiles.rules = [
     "d ${builtins.dirOf hs.authKeyFile} 0700 root root -"
     "d ${dir} 0755 root root -"
     "d ${dir}/wireguard 0700 root root -"
     "d ${dir}/openvpn 0755 root root -"
     "d ${dir}/openvpn/ca 0700 root root -"
-    "d ${dir}/openvpn/server 0755 root root -"
+    "d ${dir}/openvpn/server 0750 root heliosphere-ovpn -"
+    # Routers set up before this got 0644 files; z only touches files that already exist
+    "z ${dir}/openvpn/server/crl.pem 0640 root heliosphere-ovpn -"
+    "z ${dir}/openvpn/server/ca.crt 0600 root root -"
+    "z ${dir}/openvpn/server/server.crt 0600 root root -"
+    "z ${dir}/openvpn/ca/ca.crt 0600 root root -"
+    "z ${dir}/wireguard/public 0600 root root -"
     "d ${dir}/proxy 0700 root root -"
     "d ${dir}/egress 0700 root root -"
   ];
@@ -66,6 +77,7 @@ lib.mkIf (cfg.internal.on "remote") {
 
     config = { lib, pkgs, ... }: {
       system.stateVersion = stateVersion;
+      users.groups.heliosphere-ovpn.gid = ovpnGid;
       networking.useHostResolvConf = lib.mkForce false;
       networking.nameservers = [ hostIp ];
       services.resolved.enable = false;
@@ -90,7 +102,7 @@ lib.mkIf (cfg.internal.on "remote") {
         privateKeyFile = "${dir}/wireguard/private";
         generatePrivateKeyFile = true;
         # helios-ctl reads the public key from here when it writes client configs
-        postSetup = "${pkgs.wireguard-tools}/bin/wg pubkey < ${dir}/wireguard/private > ${dir}/wireguard/public";
+        postSetup = "(umask 077; ${pkgs.wireguard-tools}/bin/wg pubkey < ${dir}/wireguard/private > ${dir}/wireguard/public)";
         peers = map (p: { inherit (p) publicKey name; allowedIPs = [ "${p.ip}/32" ]; }) R.wireguard.peers;
       };
 
@@ -117,7 +129,7 @@ lib.mkIf (cfg.internal.on "remote") {
             persist-key
             persist-tun
             user nobody
-            group nogroup
+            group heliosphere-ovpn
             status /run/openvpn-ingress.status 10
           '';
         })

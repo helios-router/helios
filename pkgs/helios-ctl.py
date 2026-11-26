@@ -18,6 +18,7 @@ import argparse
 import base64
 import datetime as dt
 import fcntl
+import grp
 import ipaddress
 import json
 import os
@@ -202,6 +203,19 @@ def read_json(path, default=None):
             return json.load(f)
     except (OSError, ValueError):
         return default
+
+
+def give_group(path, group):
+    """Hand a root-owned file or folder to a service's group, so it can be 0640/0750 instead of
+    world-readable. Only root can do it; if the group doesn't exist yet (that service is off),
+    the file stays root's and the module's tmpfiles rules fix it up when the service is enabled."""
+    if os.geteuid() != 0:
+        return
+    try:
+        gid = grp.getgrnam(group).gr_gid
+    except KeyError:
+        return
+    os.chown(path, 0, gid)
 
 
 def write_json(path, obj):
@@ -1256,6 +1270,7 @@ def _lw_catalog():
 
 LW_CATALOG = _lw_catalog()
 LLM_DIR = os.environ.get("HELIOS_LLM_DIR", "/var/lib/llm")
+LLM_GROUP = "llm"                  # llama-cpp runs as a DynamicUser with this as a supplementary group
 LW_PAUSE = os.path.join(DATA_DIR, "logwatch-pause.json")
 LW_DOWNLOAD = os.path.join(DATA_DIR, "logwatch-download.json")
 LW_BACKENDS = ("site", "vulkan", "cpu", "remote")
@@ -1394,7 +1409,8 @@ def cmd_logwatch_model_get(a):
     pr = LW_CATALOG.get("presets", {}).get(a.preset)
     if not pr:
         fail(f"no preset {a.preset!r}")
-    os.makedirs(LLM_DIR, exist_ok=True)
+    os.makedirs(LLM_DIR, mode=0o750, exist_ok=True)
+    give_group(LLM_DIR, LLM_GROUP)
     free = shutil.disk_usage(LLM_DIR).free
     if free < pr["bytes"] + 512 * 2**20:
         fail(f"not enough space in {LLM_DIR}: needs {pr['bytes'] // 2**20} MB, {free // 2**20} MB free")
@@ -1435,7 +1451,8 @@ def cmd_logwatch_model_fetch(a):
                     last = now()
         if h.hexdigest() != pr["sha256"]:
             raise RuntimeError("checksum mismatch: the file isn't the published model; deleted it")
-        os.chmod(tmp, 0o644)
+        os.chmod(tmp, 0o640)
+        give_group(tmp, LLM_GROUP)
         os.replace(tmp, dest)
         status.update(state="done", finished=now())
     except Exception as e:  # noqa: BLE001
@@ -3355,6 +3372,7 @@ HS_WG_SUBNET = _HS.get("wgSubnet") or "10.61.0"
 HS_OVPN_SUBNET = _HS.get("ovpnSubnet") or "10.62.0"
 HS_RESERVED_PORTS = {22, 53, 67, 123, 443, 2586, 3493, 5353, 9090, 41641}
 HS_SERVER_CN = "heliosphere"
+HS_OVPN_GROUP = "heliosphere-ovpn"     # OpenVPN runs as nobody:this group and re-reads crl.pem with it
 HS_EGRESS_AUTH_PATH = "/var/lib/heliosphere/egress/auth.txt"      # where the container sees it
 HS_METHODS = {"tailscale": "Tailscale", "wireguard": "WireGuard", "openvpn": "OpenVPN", "proxy": "proxy"}
 HS_MODES = ["direct", "wireguard", "openvpn", "proxy"]
@@ -3712,7 +3730,7 @@ def hs_wg_set_server_key(priv):
     pub = tool(["wg", "pubkey"], input=priv + "\n").strip()
     old = hs_server_public_key()
     hs_write(hs_path("wireguard", "private"), priv + "\n", 0o600, 0o700)
-    hs_write(hs_path("wireguard", "public"), pub + "\n", 0o644, 0o700)
+    hs_write(hs_path("wireguard", "public"), pub + "\n", 0o600, 0o700)
     restarted = hs_exec("systemctl", "restart", "wireguard-wg-in.service", timeout=30) is not None
     return {"ok": True, "publicKey": pub, "previousPublicKey": old, "restarted": restarted}
 
@@ -3808,8 +3826,13 @@ def hs_sign(key_pem, cn, ext):
 
 
 def hs_gen_crl():
-    hs_ca("-gencrl", "-out", hs_path("openvpn", "server", "crl.pem"))
-    os.chmod(hs_path("openvpn", "server", "crl.pem"), 0o644)
+    """OpenVPN re-reads the CRL after dropping privileges, so it's 0640 root:HS_OVPN_GROUP (built
+    beside the live one and swapped in, so a handshake never sees a half-written CRL)."""
+    crl = hs_path("openvpn", "server", "crl.pem")
+    hs_ca("-gencrl", "-out", crl + ".tmp")
+    os.chmod(crl + ".tmp", 0o640)
+    give_group(crl + ".tmp", HS_OVPN_GROUP)
+    os.replace(crl + ".tmp", crl)
 
 
 def hs_pki_init():
@@ -3819,8 +3842,9 @@ def hs_pki_init():
     for dpath in (ca, os.path.join(ca, "newcerts")):
         os.makedirs(dpath, mode=0o700, exist_ok=True)
     os.chmod(ca, 0o700)
-    os.makedirs(srv, mode=0o755, exist_ok=True)
-    os.chmod(srv, 0o755)
+    os.makedirs(srv, mode=0o750, exist_ok=True)
+    os.chmod(srv, 0o750)
+    give_group(srv, HS_OVPN_GROUP)
     hs_write(hs_ca_dir("openssl.cnf"), hs_ca_cnf(), 0o600, 0o700)
     for name, content in (("index.txt", ""), ("serial", "01\n"), ("crlnumber", "01\n")):
         if not os.path.exists(hs_ca_dir(name)):
@@ -3829,12 +3853,13 @@ def hs_pki_init():
     hs_write(hs_ca_dir("ca.key"), ca_key, 0o600, 0o700)
     tool(["openssl", "req", "-new", "-x509", "-key", hs_ca_dir("ca.key"), "-config", hs_ca_dir("openssl.cnf"),
           "-extensions", "v3_ca", "-days", "3650", "-out", hs_ca_dir("ca.crt")])
-    os.chmod(hs_ca_dir("ca.crt"), 0o644)
+    os.chmod(hs_ca_dir("ca.crt"), 0o600)
     key = tool(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256"])
     crt, _ = hs_sign(key, HS_SERVER_CN, "v3_server")
     hs_write(os.path.join(srv, "server.key"), key, 0o600)
-    hs_write(os.path.join(srv, "server.crt"), crt, 0o644)
-    hs_write(os.path.join(srv, "ca.crt"), read_plain(hs_ca_dir("ca.crt")), 0o644)
+    # OpenVPN reads these (and server.key) as root before it drops privileges; persist-key keeps them
+    hs_write(os.path.join(srv, "server.crt"), crt, 0o600)
+    hs_write(os.path.join(srv, "ca.crt"), read_plain(hs_ca_dir("ca.crt")), 0o600)
     tlsf = os.path.join(srv, "tls-crypt.key")
     tool(["openvpn", "--genkey", "secret", tlsf])
     os.chmod(tlsf, 0o600)

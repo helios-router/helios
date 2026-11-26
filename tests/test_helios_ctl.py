@@ -455,6 +455,8 @@ class HeliosCtl(unittest.TestCase):
         r = json.loads(subprocess.run([sys.executable, CTL, "logwatch-model-get", "t"], capture_output=True, text=True, env=env).stdout)
         self.assertTrue(r["ok"], r)
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "llm/t.gguf")))
+        self.assertEqual(oct(os.stat(os.path.join(self.tmp, "llm/t.gguf")).st_mode & 0o777), "0o640")
+        self.assertEqual(oct(os.stat(os.path.join(self.tmp, "llm")).st_mode & 0o777), "0o750")
         conf["logwatch"]["catalog"]["presets"]["t"]["sha256"] = "0" * 64; json.dump(conf, open(self.conf_path, "w"))
         os.remove(os.path.join(self.tmp, "llm/t.gguf"))
         r = json.loads(subprocess.run([sys.executable, CTL, "logwatch-model-get", "t"], capture_output=True, text=True, env=env).stdout)
@@ -1258,11 +1260,31 @@ class HeliosCtl(unittest.TestCase):
         self.assertEqual(r["previousPublicKey"], "OLDPUB=")
         self.assertEqual(open(self.hs("wireguard", "public")).read().strip(), r["publicKey"])
         self.assertEqual(os.stat(self.hs("wireguard", "private")).st_mode & 0o777, 0o600)
+        self.assertEqual(os.stat(self.hs("wireguard", "public")).st_mode & 0o777, 0o600)
         # Import: must be a 32-byte base64 key
         self.assertIn("isn't a WireGuard private key", self.helios("remote-wg-import", stdin="not-a-key", ok=False)["error"])
         key = base64.b64encode(bytes(range(32))).decode()
         r = self.helios("remote-wg-import", stdin=key + "\n")
         self.assertEqual(open(self.hs("wireguard", "private")).read().strip(), key)
+
+    def test_give_group_only_as_root_and_only_if_the_group_exists(self):
+        import importlib.util, types
+        from unittest import mock
+        spec = importlib.util.spec_from_file_location("helios_ctl_mod", CTL)
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        f = os.path.join(self.tmp, "crl.pem"); open(f, "w").close()
+        with mock.patch.object(mod.os, "chown") as chown:
+            with mock.patch.object(mod.os, "geteuid", return_value=1000):
+                mod.give_group(f, "heliosphere-ovpn")                    # not root: leave it alone
+            chown.assert_not_called()
+            with mock.patch.object(mod.os, "geteuid", return_value=0), \
+                 mock.patch.object(mod.grp, "getgrnam", side_effect=KeyError("llm")):
+                mod.give_group(f, "llm")                                 # service off: no group yet
+            chown.assert_not_called()
+            with mock.patch.object(mod.os, "geteuid", return_value=0), \
+                 mock.patch.object(mod.grp, "getgrnam", return_value=types.SimpleNamespace(gr_gid=1194)):
+                mod.give_group(f, "heliosphere-ovpn")
+            chown.assert_called_once_with(f, 0, 1194)
 
     def test_remote_ovpn_add_revoke_with_real_openssl(self):
         if not shutil.which("openssl"):
@@ -1283,8 +1305,11 @@ class HeliosCtl(unittest.TestCase):
         srv = self.hs("openvpn", "server")
         self.assertEqual(sorted(os.listdir(srv)), ["ca.crt", "crl.pem", "server.crt", "server.key", "tls-crypt.key"])
         modes = {fn: oct(os.stat(os.path.join(srv, fn)).st_mode & 0o777) for fn in os.listdir(srv)}
-        self.assertEqual(modes, {"ca.crt": "0o644", "server.crt": "0o644", "crl.pem": "0o644", "server.key": "0o600", "tls-crypt.key": "0o600"})
+        # Nothing world-readable: OpenVPN reads all but the CRL as root; the CRL is for its group
+        self.assertEqual(modes, {"ca.crt": "0o600", "server.crt": "0o600", "crl.pem": "0o640", "server.key": "0o600", "tls-crypt.key": "0o600"})
+        self.assertEqual(oct(os.stat(srv).st_mode & 0o777), "0o750")
         self.assertEqual(oct(os.stat(self.hs("openvpn", "ca")).st_mode & 0o777), "0o700")
+        self.assertEqual(oct(os.stat(self.hs("openvpn", "ca", "ca.crt")).st_mode & 0o777), "0o600")
         ssl = lambda *a: subprocess.run(["openssl", *a], capture_output=True, text=True)
         self.assertEqual(ssl("verify", "-CAfile", os.path.join(w, "ca.crt"), os.path.join(w, "c.crt")).returncode, 0)
         self.assertEqual(ssl("verify", "-CAfile", os.path.join(w, "ca.crt"), srv + "/server.crt").returncode, 0)
@@ -1299,6 +1324,8 @@ class HeliosCtl(unittest.TestCase):
         self.assertNotEqual(r["serial"], r2["serial"])
         self.assertIn("already", self.helios("remote-ovpn-add", "phone", ok=False)["error"])
         self.helios("remote-ovpn-revoke", "laptop")
+        self.assertEqual(oct(os.stat(srv + "/crl.pem").st_mode & 0o777), "0o640")
+        self.assertNotIn("crl.pem.tmp", os.listdir(srv))
         crl = ssl("crl", "-in", srv + "/crl.pem", "-noout", "-text").stdout
         revoked = set(re.findall(r"Serial Number:\s*([0-9A-Fa-f]+)", crl))   # not a substring search: hex shows up in the signature
         self.assertIn(r["serial"].upper(), {x.upper() for x in revoked})
@@ -1322,7 +1349,7 @@ class HeliosCtl(unittest.TestCase):
         os.makedirs(wrap)
         with open(os.path.join(wrap, "openssl"), "w") as f:
             f.write(f'#!/bin/sh\necho "openssl $*" >> "{self.tmp}/argv.log"\nexec {real} "$@"\n')
-        os.chmod(os.path.join(wrap, "openssl"), 0o755)
+        os.chmod(os.path.join(wrap, "openssl"), 0o700)
         self.env["PATH"] = wrap + ":" + self.env["PATH"]
         pw = "correct-horse-battery"
         self.assertIn("16", self.helios("remote-proxy-user", "tv", stdin="short", ok=False)["error"])
