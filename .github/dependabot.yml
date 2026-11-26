@@ -8,3 +8,11 @@ updates:
     cooldown: { default-days: 7 }      # let a fresh release prove itself before we take it
     groups:
       actions: { patterns: ["*"] }
+  - package-ecosystem: pip             # tests/ci/requirements.txt (hash-pinned CI test deps)
+    directory: /tests/ci
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+  - package-ecosystem: npm             # tests/ci/package-lock.json (Playwright for browser tests)
+    directory: /tests/ci
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }

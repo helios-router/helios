@@ -42,7 +42,7 @@ jobs:
         with: { persist-credentials: false }
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: { python-version: "3.13" }
-      - run: pip install bcrypt==5.0.0
+      - run: pip install --require-hashes -r tests/ci/requirements.txt
       - run: python tests/test_helios_ctl.py
       - run: shellcheck -s bash installer/helios-install.sh tests/*.sh pkgs/*.sh
 
@@ -54,7 +54,10 @@ jobs:
         with: { persist-credentials: false }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: "22" }
-      - run: npm install --no-save --ignore-scripts --prefix "$RUNNER_TEMP/pw" playwright@1.65.1
+      - run: |
+          mkdir -p "$RUNNER_TEMP/pw"
+          cp tests/ci/package.json tests/ci/package-lock.json "$RUNNER_TEMP/pw/"
+          npm ci --ignore-scripts --prefix "$RUNNER_TEMP/pw"
       - run: '"$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps firefox webkit chromium'
       - run: |
           tests/demo.sh 8765 &

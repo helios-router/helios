@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "description": "CI-only: Playwright for tests/browsers.cjs. Installed with npm ci --ignore-scripts.",
+  "dependencies": { "playwright": "1.65.1" }
+}

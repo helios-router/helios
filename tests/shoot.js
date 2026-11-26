@@ -6,13 +6,17 @@ const fs = require("fs");
 const path = require("path");
 
 const ROOT = process.env.WEBROOT || "/tmp/heliosweb";
+const BASE = path.resolve(ROOT) + path.sep;
 const OUT = process.argv[2] || "/home/claude/shots";
 fs.mkdirSync(OUT, { recursive: true });
 const types = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
 const srv = http.createServer((req, res) => {
-  const p = path.join(ROOT, decodeURIComponent(req.url.split("?")[0].split("#")[0]));
+  let rel;
+  try { rel = decodeURIComponent(req.url.split("?")[0].split("#")[0]); } catch { res.writeHead(400); res.end(); return; }
+  const p = path.resolve(BASE, "." + rel);
+  if (!p.startsWith(BASE)) { res.writeHead(403); res.end(); return; }
   fs.readFile(p, (e, b) => { if (e) { res.writeHead(404); res.end(); return; } res.writeHead(200, { "Content-Type": types[path.extname(p)] || "text/plain" }); res.end(b); });
-}).listen(0);
+}).listen(0, "127.0.0.1");
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
