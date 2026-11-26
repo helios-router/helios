@@ -17,9 +17,24 @@ CTL = os.path.join(HERE, "..", "pkgs", "helios-ctl.py")
 STUBS = os.path.join(HERE, "stubs")
 
 
-def read_file(path):
-    with open(path) as f:
+def read_file(path, mode="r", **kw):
+    with open(path, mode, **kw) as f:
         return f.read()
+
+
+def write_file(path, data, mode="w"):
+    with open(path, mode) as f:
+        f.write(data)
+
+
+def load_json(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+def write_json(path, obj):
+    with open(path, "w") as f:
+        json.dump(obj, f)
 
 WG_OUT = """[Interface]
 PrivateKey = abc=
@@ -98,7 +113,7 @@ class HeliosCtl(unittest.TestCase):
         os.makedirs(self.cfg)
         os.makedirs(self.data)
         shutil.copy(os.path.join(HERE, "fixtures", "state.json"), self.cfg)
-        conf = json.load(open(os.path.join(HERE, "fixtures", "config.json")))
+        conf = load_json(os.path.join(HERE, "fixtures", "config.json"))
         conf["configDir"] = self.cfg
         conf["solarWind"]["url"] = f"http://127.0.0.1:{self.srv.server_port}"
         conf["heliosphere"] = {"enabled": True, "publicHost": None, "dir": os.path.join(self.tmp, "hs"), "container": "heliosphere",
@@ -106,7 +121,7 @@ class HeliosCtl(unittest.TestCase):
         conf["detectFile"] = os.path.join(self.tmp, "detect", "hardware.json")
         conf["solarWind"]["tokenFile"] = os.path.join(self.data, "solarwind-token")
         self.conf_path = os.path.join(self.tmp, "config.json")
-        json.dump(conf, open(self.conf_path, "w"))
+        write_json(self.conf_path, conf)
         with open(os.path.join(self.cfg, "configuration.nix"), "w") as f:
             f.write("{ }\n")
         # Kea leases: one known (titan), two new, one expired
@@ -122,17 +137,17 @@ class HeliosCtl(unittest.TestCase):
         for d, rx, tx in (("wan", 5_000_000_000, 400_000_000), ("family", 300_000_000, 3_000_000_000)):
             sp = os.path.join(self.fake, f"sys/class/net/{d}/statistics")
             os.makedirs(sp)
-            open(os.path.join(sp, "rx_bytes"), "w").write(str(rx))
-            open(os.path.join(sp, "tx_bytes"), "w").write(str(tx))
+            write_file(os.path.join(sp, "rx_bytes"), str(rx))
+            write_file(os.path.join(sp, "tx_bytes"), str(tx))
         os.makedirs(os.path.join(self.fake, "proc"))
-        open(os.path.join(self.fake, "proc/uptime"), "w").write("93784.2 12345.0\n")
-        open(os.path.join(self.fake, "proc/loadavg"), "w").write("0.31 0.22 0.18 1/200 999\n")
-        open(os.path.join(self.fake, "proc/meminfo"), "w").write("MemTotal: 8000000 kB\nMemAvailable: 5200000 kB\n")
+        write_file(os.path.join(self.fake, "proc/uptime"), "93784.2 12345.0\n")
+        write_file(os.path.join(self.fake, "proc/loadavg"), "0.31 0.22 0.18 1/200 999\n")
+        write_file(os.path.join(self.fake, "proc/meminfo"), "MemTotal: 8000000 kB\nMemAvailable: 5200000 kB\n")
         os.makedirs(os.path.join(self.fake, "run"))
-        open(os.path.join(self.fake, "run/miniupnpd.leases"), "w").write(
+        write_file(os.path.join(self.fake, "run/miniupnpd.leases"), 
             f"UDP:3074:10.30.0.20:3074:{t + 3000}:Xbox\nTCP:51413:10.20.0.30:51413:0:Transmission\n")
         os.makedirs(os.path.join(self.fake, "var/lib/AdGuardHome"))
-        open(os.path.join(self.fake, "var/lib/AdGuardHome/AdGuardHome.yaml"), "w").write("http:\n  address: 0.0.0.0:3000\n")
+        write_file(os.path.join(self.fake, "var/lib/AdGuardHome/AdGuardHome.yaml"), "http:\n  address: 0.0.0.0:3000\n")
         with open(os.path.join(self.data, "adguard.json"), "w") as f:
             json.dump({"url": f"http://127.0.0.1:{self.srv.server_port}", "user": "admin", "password": "pw"}, f)
         ADGUARD["clients"] = [{"name": "someone-manual", "ids": ["10.20.0.99"]}]
@@ -157,7 +172,7 @@ class HeliosCtl(unittest.TestCase):
 
     def stub_log(self):
         try:
-            return open(self.env["STUB_LOG"]).read()
+            return read_file(self.env["STUB_LOG"])
         except OSError:
             return ""
 
@@ -167,7 +182,7 @@ class HeliosCtl(unittest.TestCase):
             if st.get("state") == want:
                 return st
             time.sleep(0.1)
-        self.fail(f"apply never reached {want}: {st}")
+        raise self.failureException(f"apply never reached {want}: {st}")
 
     # ---------------------------------------------------------------- tests
     def test_devices_merge_leases_and_state(self):
@@ -215,7 +230,7 @@ class HeliosCtl(unittest.TestCase):
                                            "mediaServer": {"tcp": [8096], "networks": ["guest"]}}))
         # Rename + renumber: the device follows, keeping its host octet; references follow the name
         self.helios("network-set", json.dumps({**guest, "from": "guest", "name": "visitors", "prefix": "10.71.0", "vlan": 71}))
-        st = json.load(open(os.path.join(self.cfg, "state.json")))
+        st = load_json(os.path.join(self.cfg, "state.json"))
         tv = next(d for d in st["devices"] if d["name"] == "tv1")
         self.assertEqual((tv["vlan"], tv["ip"]), ("visitors", "10.71.0.20"))
         self.assertTrue(tv["media"])
@@ -226,7 +241,7 @@ class HeliosCtl(unittest.TestCase):
         self.helios("device-remove", "cc:cc:cc:00:00:04")
         self.helios("network-remove", "visitors")
         self.assertNotIn("visitors", [n["name"] for n in self.helios("networks")["networks"]])
-        st = json.load(open(os.path.join(self.cfg, "state.json")))
+        st = load_json(os.path.join(self.cfg, "state.json"))
         self.assertEqual(next(d for d in st["devices"] if d["name"] == "titan")["mediaServer"]["networks"], [])
         mg = next(n for n in self.helios("networks")["networks"] if n["name"] == "mgmt")
         self.helios("network-set", json.dumps({**{k: mg[k] for k in ("name", "label", "vlan", "prefix", "ipv6", "role")},
@@ -246,7 +261,7 @@ class HeliosCtl(unittest.TestCase):
         self.assertEqual(r["device"]["mediaServers"], ["plexbox"])
         for bad, msg in ((["nope"], "isn't a media server"), ([], "at least one media server"), ("plexbox", "list")):
             self.assertIn(msg, self.helios("device-set", json.dumps({**tv, "mediaServers": bad}), ok=False)["error"])
-        dev = lambda n: next(d for d in json.load(open(os.path.join(self.cfg, "state.json")))["devices"] if d["name"] == n)
+        dev = lambda n: next(d for d in load_json(os.path.join(self.cfg, "state.json"))["devices"] if d["name"] == n)
         # Server renamed: the TV's list follows; server stops serving: the TV falls back to "all"
         self.helios("device-set", json.dumps({**srv, "mac": "cc:00:00:00:00:02", "name": "plex", "mediaServer": {"tcp": [32400]}}))
         self.assertEqual(dev("tv")["mediaServers"], ["plex"])
@@ -273,7 +288,7 @@ class HeliosCtl(unittest.TestCase):
         d = self.helios("device-set", json.dumps({"mac": "cc:00:00:00:00:09", "name": "desk", "vlan": "family"}))["device"]
         self.assertEqual(d["profile"], "staff")
         self.helios("profile-set", json.dumps({**staff, "from": "staff", "name": "office"}))
-        st = json.load(open(os.path.join(self.cfg, "state.json")))
+        st = load_json(os.path.join(self.cfg, "state.json"))
         self.assertEqual(next(x for x in st["devices"] if x["name"] == "desk")["profile"], "office")
         self.assertEqual(next(n for n in st["networks"] if n["name"] == "family")["defaultProfile"], "office")
         self.assertIn("still in use", self.helios("profile-remove", "office", ok=False)["error"])
@@ -322,24 +337,24 @@ class HeliosCtl(unittest.TestCase):
     def test_upnp_close_block_unblock(self):
         leases = os.path.join(self.fake, "run/miniupnpd.leases")
         self.helios("device-set", json.dumps({"mac": "cc:00:00:00:00:30", "name": "seedbox", "vlan": "trusted", "ip": "10.20.0.30"}))
-        open(leases, "a").write("TCP:3389:10.30.0.20:3389:0:RDP\n")
+        write_file(leases, "TCP:3389:10.30.0.20:3389:0:RDP\n", "a")
         # Close one mapping: miniupnpd is stopped, the lease line dropped, then started again
         self.assertEqual(self.helios("upnp-close", "udp", "3074")["removed"], 1)
-        self.assertNotIn("3074", open(leases).read())
+        self.assertNotIn("3074", read_file(leases))
         log = self.stub_log()
         self.assertLess(log.index("systemctl stop miniupnpd.service"), log.index("systemctl start miniupnpd.service"))
         self.assertIn("no open TCP port 1", self.helios("upnp-close", "tcp", "1", ok=False)["error"])
         # Block a device: its mapping closes now, the block shows as a pending change
         r = self.helios("upnp-block", json.dumps({"device": "seedbox"}))
         self.assertEqual(r["closed"], 1)
-        self.assertNotIn("51413", open(leases).read())
+        self.assertNotIn("51413", read_file(leases))
         self.assertIn("Change upnp settings", self.helios("pending")["changes"])
         # Block a port range; a mapping inside it is reported as blocked
-        open(leases, "a").write("TCP:6001:10.30.0.20:6001:0:Game\n")
+        write_file(leases, "TCP:6001:10.30.0.20:6001:0:Game\n", "a")
         self.helios("upnp-block", json.dumps({"port": "6000-6100"}))
         u = self.helios("upnp")
         self.assertEqual((u["blockedDevices"], u["blockedPorts"]), (["seedbox"], ["6000-6100"]))
-        self.assertNotIn("6001", open(leases).read())
+        self.assertNotIn("6001", read_file(leases))
         for bad, msg in (({"port": "70000"}, "1-65535"), ({"device": "ghost"}, "no named device"),
                          ({"device": "seedbox", "port": "1"}, "either a device or a port"), ({}, "either a device or a port")):
             self.assertIn(msg, self.helios("upnp-block", json.dumps(bad), ok=False)["error"])
@@ -348,7 +363,7 @@ class HeliosCtl(unittest.TestCase):
         self.assertIn("isn't blocked", self.helios("upnp-unblock", json.dumps({"port": "22"}), ok=False)["error"])
         # Close all really empties the lease file
         self.assertGreaterEqual(self.helios("upnp-clear")["removed"], 1)
-        self.assertEqual(open(leases).read().strip(), "")
+        self.assertEqual(read_file(leases).strip(), "")
 
     def test_printing_status_printers_and_cleanup(self):
         r = self.helios("printing")
@@ -364,7 +379,7 @@ class HeliosCtl(unittest.TestCase):
         usb = "usb://Brother/HL-L2350DW%20series?serial=E78123"
         self.helios("printer-set", json.dumps({"name": "office", "deviceUri": usb, "model": "drv:///brlaser.drv/brl2350.ppd", "default": True}))
         self.helios("printer-set", json.dumps({"name": "photo", "deviceUri": "ipp://10.30.0.50/ipp/print", "model": "everywhere", "location": "Den", "default": True}))
-        st = json.load(open(os.path.join(self.cfg, "state.json")))["printing"]
+        st = load_json(os.path.join(self.cfg, "state.json"))["printing"]
         self.assertEqual([x.get("default", False) for x in st["printers"]], [False, True])
         r = self.helios("printing")
         self.assertNotIn(usb, [d["uri"] for d in r["discovered"]])
@@ -411,11 +426,11 @@ class HeliosCtl(unittest.TestCase):
         self.helios("service-set", "notifications", "off")
         self.assertIn("Turn off Notifications", self.helios("pending")["changes"])
         self.helios("service-set", "printing", "default"); self.helios("service-set", "notifications", "default")
-        st = json.load(open(os.path.join(self.cfg, "state.json")))
+        st = load_json(os.path.join(self.cfg, "state.json"))
         self.assertNotIn("services", st)                                       # nothing left to override
         self.assertIn("core services can't", self.helios("service-set", "firewall", "off", ok=False)["error"])
         # site.nix defaults come from config.json
-        conf = json.load(open(self.conf_path)); conf["serviceDefaults"] = {"printing": True}; json.dump(conf, open(self.conf_path, "w"))
+        conf = load_json(self.conf_path); conf["serviceDefaults"] = {"printing": True}; write_json(self.conf_path, conf)
         self.assertTrue({x["id"]: x for x in self.helios("services")["services"]}["printing"]["enabled"])
 
     def test_logwatch_settings_recommend_guard_and_download(self):
@@ -440,47 +455,47 @@ class HeliosCtl(unittest.TestCase):
         self.assertIsNone(rec(2048, 2, False))
         # Guard: high CPU pressure pauses; --check then says "skip"; an expired pause resumes
         os.makedirs(os.path.join(self.fake, "proc/pressure"), exist_ok=True)
-        open(os.path.join(self.fake, "proc/pressure/cpu"), "w").write("some avg10=80.00 avg60=55.00 avg300=20.00 total=1\n")
-        open(os.path.join(self.fake, "proc/pressure/memory"), "w").write("some avg10=0.00 avg60=1.00 avg300=0.00 total=1\n")
+        write_file(os.path.join(self.fake, "proc/pressure/cpu"), "some avg10=80.00 avg60=55.00 avg300=20.00 total=1\n")
+        write_file(os.path.join(self.fake, "proc/pressure/memory"), "some avg10=0.00 avg60=1.00 avg300=0.00 total=1\n")
         r = self.helios("logwatch-guard")
         self.assertEqual((r["action"], r["hours"]), ("paused", 6))
         self.assertIn("CPU pressure 55%", r["reason"])
         self.assertIn("systemctl stop logwatch.service llama-cpp.service", self.stub_log())
         self.assertEqual(subprocess.run([sys.executable, CTL, "logwatch-guard", "--check"], env=self.env).returncode, 1)
         pause = os.path.join(self.data, "logwatch-pause.json")
-        d = json.load(open(pause)); d["until"] = 1; json.dump(d, open(pause, "w"))
+        d = load_json(pause); d["until"] = 1; write_json(pause, d)
         self.assertEqual(self.helios("logwatch-guard")["action"], "resumed")
         self.assertEqual(subprocess.run([sys.executable, CTL, "logwatch-guard", "--check"], env=self.env).returncode, 0)
         # Download: verified against the pinned sha256; a mismatch leaves nothing behind
         import hashlib
-        blob = os.path.join(self.tmp, "m.gguf"); open(blob, "wb").write(b"GGUF" + b"x" * 1000)
-        good = hashlib.sha256(open(blob, "rb").read()).hexdigest()
-        conf = json.load(open(self.conf_path))
+        blob = os.path.join(self.tmp, "m.gguf"); write_file(blob, b"GGUF" + b"x" * 1000, "wb")
+        good = hashlib.sha256(read_file(blob, "rb")).hexdigest()
+        conf = load_json(self.conf_path)
         conf["logwatch"] = {"catalog": {"baseUrl": "https://example.invalid", "defaults": mod.LW_CATALOG["defaults"],
                             "presets": {"t": {"label": "T", "repo": "r", "file": "t.gguf", "bytes": 1004, "sha256": good, "ramMB": 512}}}}
-        json.dump(conf, open(self.conf_path, "w"))
+        write_json(self.conf_path, conf)
         env = dict(self.env, HELIOS_MODEL_URL="file://" + blob, HELIOS_LLM_DIR=os.path.join(self.tmp, "llm"), HELIOS_NO_SYSTEMD="1")
         r = json.loads(subprocess.run([sys.executable, CTL, "logwatch-model-get", "t"], capture_output=True, text=True, env=env).stdout)
         self.assertTrue(r["ok"], r)
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "llm/t.gguf")))
         self.assertEqual(oct(os.stat(os.path.join(self.tmp, "llm/t.gguf")).st_mode & 0o777), "0o400")
         self.assertEqual(oct(os.stat(os.path.join(self.tmp, "llm")).st_mode & 0o777), "0o700")
-        conf["logwatch"]["catalog"]["presets"]["t"]["sha256"] = "0" * 64; json.dump(conf, open(self.conf_path, "w"))
+        conf["logwatch"]["catalog"]["presets"]["t"]["sha256"] = "0" * 64; write_json(self.conf_path, conf)
         os.remove(os.path.join(self.tmp, "llm/t.gguf"))
         r = json.loads(subprocess.run([sys.executable, CTL, "logwatch-model-get", "t"], capture_output=True, text=True, env=env).stdout)
         self.assertFalse(r["ok"]); self.assertIn("checksum", r["error"])
         self.assertEqual(os.listdir(os.path.join(self.tmp, "llm")), [])
 
     def test_recovery_alert_retry_recover_escalate(self):
-        conf = json.load(open(self.conf_path))
+        conf = load_json(self.conf_path)
         conf["recovery"] = {"units": [{"unit": "kea-dhcp4-server", "restart": True}, {"unit": "nftables", "restart": False}], "cooldownMin": 30, "maxPerDay": 2}
-        json.dump(conf, open(self.conf_path, "w"))
+        write_json(self.conf_path, conf)
         state = os.path.join(self.data, "recovery.json")
         run = lambda *a, failed="": json.loads(subprocess.run([sys.executable, CTL, *a], capture_output=True, text=True,
                                                                env=dict(self.env, STUB_FAILED=failed)).stdout)
         # OnFailure hook: urgent notification, recorded
         self.assertTrue(self.helios("unit-failed", "kea-dhcp4-server.service")["ok"])
-        self.assertIn("kea-dhcp4-server.service", json.load(open(state)))
+        self.assertIn("kea-dhcp4-server.service", load_json(state))
         self.assertIn("bad unit name", self.helios("unit-failed", "x; rm -rf /", ok=False)["error"])
         # Timer: still failed → one retry (reset-failed + start), then the cooldown holds it back
         both = "kea-dhcp4-server.service nftables.service"
@@ -491,14 +506,14 @@ class HeliosCtl(unittest.TestCase):
         self.assertNotIn("systemctl start --no-block nftables", self.stub_log())
         self.assertEqual(run("recover", failed=both)["retried"], [])       # cooldown
         # Daily cap reached → escalate once, not again
-        st = json.load(open(state)); st["kea-dhcp4-server.service"]["attempts"] = [int(time.time()) - 7200, int(time.time()) - 3600]
-        json.dump(st, open(state, "w"))
+        st = load_json(state); st["kea-dhcp4-server.service"]["attempts"] = [int(time.time()) - 7200, int(time.time()) - 3600]
+        write_json(state, st)
         self.assertEqual(run("recover", failed=both)["escalated"], ["kea-dhcp4-server.service"])
         self.assertEqual(run("recover", failed=both)["escalated"], [])
         # Back up → "recovered", record cleared
         r = run("recover", failed="")
         self.assertEqual(sorted(r["recovered"]), ["kea-dhcp4-server.service", "nftables.service"])
-        self.assertEqual(json.load(open(state)), {})
+        self.assertEqual(load_json(state), {})
 
     def test_reboot_status_window_and_notices(self):
         def system(name, kernel):
@@ -523,7 +538,7 @@ class HeliosCtl(unittest.TestCase):
         self.assertIn("kernel", r["reasons"])
         self.assertTrue(self.helios("reboot-check")["needed"])
         notice = os.path.join(self.data, "reboot-notice.json")
-        self.assertEqual(json.load(open(notice))["for"], "6.12.95")
+        self.assertEqual(load_json(notice)["for"], "6.12.95")
         # Window settings: validation, ordering of days, next window
         for bad, msg in (({"rebootWindow": {"days": []}}, "days"), ({"rebootWindow": {"time": "25:00"}}, "time"),
                          ({"rebootWindow": {"enabled": "yes"}}, "true or false"), ({"nope": 1}, "expected"),
@@ -534,10 +549,10 @@ class HeliosCtl(unittest.TestCase):
         self.assertIsNotNone(r["nextWindow"])
         self.assertIn("Reboot window: wed, sun 04:30", self.helios("pending")["changes"])
         # In the window: skipped while a change is being confirmed, otherwise reboots
-        json.dump({"state": "confirm"}, open(os.path.join(self.data, "apply.json"), "w"))
+        write_json(os.path.join(self.data, "apply.json"), {"state": "confirm"})
         self.assertEqual(self.helios("reboot-window")["action"], "skipped")
         self.assertIn("being applied", self.helios("reboot", ok=False)["error"])
-        json.dump({}, open(os.path.join(self.data, "apply.json"), "w"))
+        write_json(os.path.join(self.data, "apply.json"), {})
         self.assertEqual(self.helios("reboot-window")["action"], "reboot")
         self.assertIn("systemctl reboot --no-block", self.stub_log())
 
@@ -555,9 +570,9 @@ class HeliosCtl(unittest.TestCase):
         self.assertTrue(unnamed_family and all(d["restricted"] for d in unnamed_family))
         self.assertFalse(any(d["restricted"] for d in devs if d["known"]))
         # No named admin-network device: waits instead of locking everyone out
-        st = json.load(open(os.path.join(self.cfg, "state.json")))
+        st = load_json(os.path.join(self.cfg, "state.json"))
         st["devices"] = [d for d in st["devices"] if d["vlan"] not in ("trusted", "mgmt")]
-        json.dump(st, open(os.path.join(self.cfg, "state.json"), "w"))
+        write_json(os.path.join(self.cfg, "state.json"), st)
         ru = self.helios("devices")["restrictUnnamed"]
         self.assertEqual((ru["armed"], ru["waitingForAdmin"]), (False, True))
 
@@ -614,7 +629,7 @@ class HeliosCtl(unittest.TestCase):
         self.helios("rollback", "--auto")
         self.assertIn("--rollback", self.stub_log())
         self.assertFalse(self.helios("pending")["dirty"])
-        self.assertNotIn("ceres", {d["name"] for d in json.load(open(os.path.join(self.cfg, "state.json")))["devices"]})
+        self.assertNotIn("ceres", {d["name"] for d in load_json(os.path.join(self.cfg, "state.json"))["devices"]})
         self.assertEqual(self.helios("apply-status")["apply"]["state"], "rolledback")
 
     def test_block_is_instant_and_committed(self):
@@ -698,12 +713,12 @@ class HeliosCtl(unittest.TestCase):
         import bcrypt
         self.assertTrue(self.helios("notify-setup")["created"])
         self.assertFalse(self.helios("notify-setup")["created"])          # idempotent
-        env = dict(line.split("=", 1) for line in open(os.path.join(self.data, "solarwind.env")).read().splitlines())
+        env = dict(line.split("=", 1) for line in read_file(os.path.join(self.data, "solarwind.env")).splitlines())
         users = env["NTFY_AUTH_USERS"].split(",")
         self.assertEqual([u.split(":")[0] for u in users], ["helios", "phone"])
         self.assertIn("helios:flare:write-only", env["NTFY_AUTH_ACCESS"].split(","))
         self.assertIn("phone:aurora:read-only", env["NTFY_AUTH_ACCESS"].split(","))
-        token = open(os.path.join(self.data, "solarwind-token")).read().strip()
+        token = read_file(os.path.join(self.data, "solarwind-token")).strip()
         self.assertRegex(token, r"^tk_[a-z0-9]{29}$")
         self.assertEqual(env["NTFY_AUTH_TOKENS"], f"helios:{token}:HeliOS router")
         self.assertEqual(oct(os.stat(os.path.join(self.data, "solarwind.env")).st_mode & 0o777), "0o600")
@@ -718,12 +733,12 @@ class HeliosCtl(unittest.TestCase):
         self.assertEqual(recent[0]["kind"], "flare")
         self.assertTrue(NTFY["auth"].startswith("Basic "))              # reads with the phone login
         self.helios("notify-setup", "--rotate")
-        self.assertNotEqual(open(os.path.join(self.data, "solarwind-token")).read().strip(), token)
+        self.assertNotEqual(read_file(os.path.join(self.data, "solarwind-token")).strip(), token)
 
     def test_solar_wind_custom_phone_login(self):
         import bcrypt
         envf = os.path.join(self.data, "solarwind.env")
-        read_env = lambda: dict(l.split("=", 1) for l in open(envf).read().splitlines())
+        read_env = lambda: dict(l.split("=", 1) for l in read_file(envf).splitlines())
         self.helios("notify-setup")
         before = read_env()
         helios_user = before["NTFY_AUTH_USERS"].split(",")[0]
@@ -790,15 +805,15 @@ class HeliosCtl(unittest.TestCase):
             os.makedirs(n)
             os.symlink(d, os.path.join(n, "device"))
             for k, v in (("address", mac), ("speed", speed), ("carrier", carrier)):
-                open(os.path.join(n, k), "w").write(v + "\n")
+                write_file(os.path.join(n, k), v + "\n")
         nic("trunk0", "02:00:00:00:00:01", "pci0000:00/0000:00:1c.0/0000:01:00.0", "igb")
         nic("enp3s0", "aa:bb:cc:dd:ee:01", "pci0000:00/0000:00:1c.1/0000:03:00.0", "r8169", speed="-1", carrier="0")
         nic("enx001", "aa:bb:cc:dd:ee:09", "pci0000:00/0000:00:14.0/usb2/2-1/2-1:1.0", "r8152")
         os.makedirs(os.path.join(net, "lan1"))             # DSA user port: no device link
-        open(os.path.join(net, "lan1/phys_switch_id"), "w").write("00112233\n")
-        open(os.path.join(net, "lan1/address"), "w").write("aa:bb:cc:dd:ee:77\n")
-        open(os.path.join(net, "lan1/carrier"), "w").write("1\n")
-        open(os.path.join(net, "lan1/speed"), "w").write("100\n")
+        write_file(os.path.join(net, "lan1/phys_switch_id"), "00112233\n")
+        write_file(os.path.join(net, "lan1/address"), "aa:bb:cc:dd:ee:77\n")
+        write_file(os.path.join(net, "lan1/carrier"), "1\n")
+        write_file(os.path.join(net, "lan1/speed"), "100\n")
         # "family" (from setUp) has no device link: virtual, skipped
         usb = os.path.join(self.fake, "sys/bus/usb/devices")
 
@@ -806,22 +821,22 @@ class HeliosCtl(unittest.TestCase):
             d = os.path.join(usb, name)
             os.makedirs(d)
             for k, v in dict(idVendor=vid, idProduct=pid, bDeviceClass=cls, **files).items():
-                open(os.path.join(d, k), "w").write(v + "\n")
+                write_file(os.path.join(d, k), v + "\n")
             return d
         usbdev("usb1", "1d6b", "0002", "09", product="xHCI Host Controller")
         usbdev("1-1", "05e3", "0610", "09", product="USB Hub")
         usbdev("1-2", "051d", "0002", manufacturer="American Power Conversion", product="Back-UPS ES 600M1", serial="3B1234X56789")
         d = usbdev("2-1", "0bda", "8152", manufacturer="Realtek", product="USB 10/100 LAN")
         os.makedirs(os.path.join(d, "2-1:1.0"))
-        open(os.path.join(d, "2-1:1.0/bInterfaceClass"), "w").write("0a\n")
+        write_file(os.path.join(d, "2-1:1.0/bInterfaceClass"), "0a\n")
         d = usbdev("1-3", "1234", "5678", product="Gadget")
         os.makedirs(os.path.join(d, "1-3:1.0"))
-        open(os.path.join(d, "1-3:1.0/bInterfaceClass"), "w").write("03\n")
+        write_file(os.path.join(d, "1-3:1.0/bInterfaceClass"), "03\n")
 
     def test_detect_reads_sysfs_and_lldp(self):
         self.make_sysfs()
         det = self.helios("detect")
-        self.assertEqual(json.load(open(os.path.join(self.tmp, "detect", "hardware.json")))["ports"], det["ports"])
+        self.assertEqual(load_json(os.path.join(self.tmp, "detect", "hardware.json"))["ports"], det["ports"])
         ports = {x["name"]: x for x in det["ports"]}
         self.assertEqual(sorted(ports), ["enp3s0", "enx001", "lan1", "trunk0"])
         self.assertEqual((ports["trunk0"]["role"], ports["trunk0"]["bus"], ports["trunk0"]["driver"], ports["trunk0"]["speed"]),
@@ -909,7 +924,7 @@ class HeliosCtl(unittest.TestCase):
         r = self.helios("driver-set", json.dumps({"name": "nut", "enabled": True, "shutdown": {"charge": 30},
                                                "server": {"enabled": True, "networks": ["trusted", "trusted"]}}))
         self.assertEqual((r["shutdown"], r["server"]), ({"charge": 30, "runtime": 180}, {"enabled": True, "networks": ["trusted"]}))
-        st = json.load(open(os.path.join(self.cfg, "state.json")))
+        st = load_json(os.path.join(self.cfg, "state.json"))
         self.assertEqual(st["drivers"]["nut"], {"enabled": True, "shutdown": {"charge": 30, "runtime": 180},
                                                  "server": {"enabled": True, "networks": ["trusted"]}})
         self.helios("driver-set", json.dumps({"name": "nut", "enabled": False}))
@@ -1053,7 +1068,7 @@ class HeliosCtl(unittest.TestCase):
         files = sorted(os.listdir(spool))
         self.assertEqual(len(files), 2)
         self.assertTrue(all(f.endswith(".json") for f in files))
-        ev = json.load(open(os.path.join(spool, files[0])))
+        ev = load_json(os.path.join(spool, files[0]))
         self.assertEqual((ev["type"], ev["ups"], ev["message"]), ("ONBATT", "ups", "UPS ups on battery"))
         self.assertIsInstance(ev["time"], int)
         self.assertEqual(NTFY["posts"], [])                  # the event hook sends nothing itself
@@ -1080,9 +1095,9 @@ class HeliosCtl(unittest.TestCase):
         self.assertEqual(NTFY["posts"][0]["title"], "UPS other: battery low")
         self.assertEqual(NTFY["posts"][5]["title"], "UPS other: weird")
         # server unreachable → files stay for the next run
-        conf = json.load(open(self.conf_path))
+        conf = load_json(self.conf_path)
         conf["solarWind"]["url"] = "http://127.0.0.1:1"
-        json.dump(conf, open(self.conf_path, "w"))
+        write_json(self.conf_path, conf)
         self.env.update(NOTIFYTYPE="ONBATT")
         self.helios("ups-event")
         r = self.helios("ups-forward")
@@ -1091,7 +1106,7 @@ class HeliosCtl(unittest.TestCase):
 
     def vulnix_file(self, entries):
         path = os.path.join(self.tmp, "vulnix.json")
-        json.dump(entries, open(path, "w"))
+        write_json(path, entries)
         return path
 
     def test_vulnix_report_summary_and_notifications(self):
@@ -1155,7 +1170,7 @@ class HeliosCtl(unittest.TestCase):
         bad({"ingress": {"wireguard": {"enabled": "yes"}}}, "true or false")
         bad({"ingress": {"proxy": {"networks": ["nope"]}}}, "unknown network")
         bad({"ingress": {"proxy": {"enabled": True, "networks": ["iot"]}}}, "at least one user")
-        open(os.path.join(self.fake, "run/miniupnpd.leases"), "a").write("TCP:8888:10.20.0.30:8888:0:x\n")
+        write_file(os.path.join(self.fake, "run/miniupnpd.leases"), "TCP:8888:10.20.0.30:8888:0:x\n", "a")
         bad({"ingress": {"wireguard": {"port": 8888}}}, "UPnP")
         self.helios("remote-proxy-user", "tv", stdin="a-long-enough-password")
         bad({"ingress": {"proxy": {"enabled": True}}}, "at least one home network")
@@ -1172,10 +1187,10 @@ class HeliosCtl(unittest.TestCase):
         bad({"egress": {"proxy": {"type": "socks5", "host": "a.b", "port": 1, "user": "x"}}}, "type, host and port")
         bad({"egress": {"killswitch": 1}}, "true or false")
         self.helios("remote-set", json.dumps({"ingress": {"proxy": {"enabled": True, "networks": ["iot"]}}}))
-        r = self.helios("remote-set", json.dumps({"ingress": {"wireguard": {"enabled": True, "port": 51821}, "openvpn": {"proto": "tcp"}},
+        self.helios("remote-set", json.dumps({"ingress": {"wireguard": {"enabled": True, "port": 51821}, "openvpn": {"proto": "tcp"}},
                                                "egress": {"mode": "proxy", "killswitch": False,
                                                           "proxy": {"type": "socks5", "host": "proxy.example.net", "port": 1080}}}))
-        st = json.load(open(os.path.join(self.cfg, "state.json")))["heliosphere"]
+        st = load_json(os.path.join(self.cfg, "state.json"))["heliosphere"]
         self.assertEqual(st["ingress"]["wireguard"]["port"], 51821)
         self.assertEqual(st["ingress"]["openvpn"]["proto"], "tcp")
         self.assertEqual(st["egress"]["proxy"]["host"], "proxy.example.net")
@@ -1201,7 +1216,7 @@ class HeliosCtl(unittest.TestCase):
     def test_remote_wg_add_remove(self):
         self.assertIn("hasn't started WireGuard", self.helios("remote-wg-add", "pixel", ok=False)["error"])
         os.makedirs(self.hs("wireguard"))
-        open(self.hs("wireguard", "public"), "w").write("U0VSVkVSUFVCX19fX19fX19fX19fX19fX19fX19fX18=\n")
+        write_file(self.hs("wireguard", "public"), "U0VSVkVSUFVCX19fX19fX19fX19fX19fX19fX19fX18=\n")
         r = self.helios("remote-wg-add", "pixel")
         self.assertEqual(r["ip"], "10.61.0.2")
         cfg = r["config"]
@@ -1223,19 +1238,19 @@ class HeliosCtl(unittest.TestCase):
         for root in (self.cfg, self.tmp + "/hs", self.data):
             for dp, _, fs in os.walk(root):
                 for fn in fs:
-                    blob += open(os.path.join(dp, fn), errors="ignore").read()
+                    blob += read_file(os.path.join(dp, fn), errors="ignore")
         self.assertNotIn("cHJpdmF0ZWtleS", blob)
-        peers = json.load(open(os.path.join(self.cfg, "state.json")))["heliosphere"]["ingress"]["wireguard"]["peers"]
+        peers = load_json(os.path.join(self.cfg, "state.json"))["heliosphere"]["ingress"]["wireguard"]["peers"]
         self.assertEqual([x["name"] for x in peers], ["tablet", "again"])
         self.assertTrue(base64.b64decode(peers[0]["publicKey"]).startswith(b"pub-of-"))
         self.assertIn("Remote access: add WireGuard peer tablet", self.helios("pending")["changes"])
 
     def test_remote_wg_endpoint_uses_public_host(self):
-        conf = json.load(open(self.conf_path))
+        conf = load_json(self.conf_path)
         conf["heliosphere"]["publicHost"] = "vpn.example.org"
-        json.dump(conf, open(self.conf_path, "w"))
+        write_json(self.conf_path, conf)
         os.makedirs(self.hs("wireguard"))
-        open(self.hs("wireguard", "private"), "w").write("priv\n")                 # public derived through `wg pubkey`
+        write_file(self.hs("wireguard", "private"), "priv\n")                 # public derived through `wg pubkey`
         r = self.helios("remote-wg-add", "pixel")
         self.assertIn("Endpoint = vpn.example.org:51820", r["config"])
         self.assertIn("PublicKey = " + base64.b64encode(b"pub-of-priv".ljust(32)).decode(), r["config"])
@@ -1261,7 +1276,7 @@ class HeliosCtl(unittest.TestCase):
             self.assertIn(msg, self.helios("remote-set", json.dumps({"ingress": bad}), ok=False)["error"])
         # Split tunnel: only the chosen home networks + the router's DNS; no keepalive line when 0; MTU set
         os.makedirs(self.hs("wireguard"))
-        open(self.hs("wireguard", "public"), "w").write("U0VSVkVSUFVCX19fX19fX19fX19fX19fX19fX19fX18=\n")
+        write_file(self.hs("wireguard", "public"), "U0VSVkVSUFVCX19fX19fX19fX19fX19fX19fX19fX18=\n")
         cfg = self.helios("remote-wg-add", "pixel")["config"]
         self.assertIn("AllowedIPs = 10.20.0.0/24, 10.60.0.1/32", cfg)
         self.assertIn("MTU = 1380", cfg)
@@ -1269,33 +1284,33 @@ class HeliosCtl(unittest.TestCase):
 
     def test_remote_wg_server_key_and_renew(self):
         os.makedirs(self.hs("wireguard"))
-        open(self.hs("wireguard", "public"), "w").write("T0xEUFVCX19fX19fX19fX19fX19fX19fX19fX19fX18=\n")
+        write_file(self.hs("wireguard", "public"), "T0xEUFVCX19fX19fX19fX19fX19fX19fX19fX19fX18=\n")
         old = self.helios("remote-wg-add", "pixel")
         # Renew: same address, new key pair, a change in the pending list; unknown peer refused
-        st0 = json.load(open(os.path.join(self.cfg, "state.json")))
-        open(os.path.join(self.cfg, "state.json"), "w").write(json.dumps(st0).replace(
+        st0 = load_json(os.path.join(self.cfg, "state.json"))
+        write_file(os.path.join(self.cfg, "state.json"), json.dumps(st0).replace(
             st0["heliosphere"]["ingress"]["wireguard"]["peers"][0]["publicKey"], "STALE="))
         r = self.helios("remote-wg-renew", "pixel")
         self.assertEqual(r["ip"], old["ip"])
         self.assertIn("PrivateKey = ", r["config"])
-        st1 = json.load(open(os.path.join(self.cfg, "state.json")))
+        st1 = load_json(os.path.join(self.cfg, "state.json"))
         self.assertNotEqual(st1["heliosphere"]["ingress"]["wireguard"]["peers"][0]["publicKey"], "STALE=")
         self.assertIn("no WireGuard peer", self.helios("remote-wg-renew", "ghost", ok=False)["error"])
         # Rotate: new private + public key files, previous key reported; files private
         r = self.helios("remote-wg-rotate")
         self.assertEqual(r["previousPublicKey"], "T0xEUFVCX19fX19fX19fX19fX19fX19fX19fX19fX18=")
-        self.assertEqual(open(self.hs("wireguard", "public")).read().strip(), r["publicKey"])
+        self.assertEqual(read_file(self.hs("wireguard", "public")).strip(), r["publicKey"])
         self.assertEqual(os.stat(self.hs("wireguard", "private")).st_mode & 0o777, 0o600)
         self.assertEqual(os.stat(self.hs("wireguard", "public")).st_mode & 0o777, 0o600)
         # Import: must be a 32-byte base64 key
         self.assertIn("isn't a WireGuard private key", self.helios("remote-wg-import", stdin="not-a-key", ok=False)["error"])
         key = base64.b64encode(bytes(range(32))).decode()
-        r = self.helios("remote-wg-import", stdin=key + "\n")
-        self.assertEqual(open(self.hs("wireguard", "private")).read().strip(), key)
+        self.helios("remote-wg-import", stdin=key + "\n")
+        self.assertEqual(read_file(self.hs("wireguard", "private")).strip(), key)
 
     def test_give_to_only_as_root_and_only_if_the_account_exists(self):
         import importlib.util, types
-        from unittest import mock
+        import unittest.mock as mock
         spec = importlib.util.spec_from_file_location("helios_ctl_mod", CTL)
         mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
         f = os.path.join(self.tmp, "crl.pem"); open(f, "w").close()
@@ -1333,7 +1348,7 @@ class HeliosCtl(unittest.TestCase):
         w = os.path.join(self.tmp, "w")
         os.makedirs(w)
         for tag, fn in (("ca", "ca.crt"), ("cert", "c.crt")):
-            open(os.path.join(w, fn), "w").write(block(tag))
+            write_file(os.path.join(w, fn), block(tag))
         srv = self.hs("openvpn", "server")
         self.assertEqual(sorted(os.listdir(srv)), ["ca.crt", "crl.pem", "server.crt", "server.key", "tls-crypt.key"])
         modes = {fn: oct(os.stat(os.path.join(srv, fn)).st_mode & 0o777) for fn in os.listdir(srv)}
@@ -1365,11 +1380,11 @@ class HeliosCtl(unittest.TestCase):
         self.assertNotEqual(ssl("verify", "-crl_check", "-CAfile", os.path.join(w, "ca.crt"), "-CRLfile", srv + "/crl.pem",
                                 os.path.join(w, "c.crt")).returncode, 0)
         self.assertIn("no active", self.helios("remote-ovpn-revoke", "laptop", ok=False)["error"])
-        clients = json.load(open(os.path.join(self.cfg, "state.json")))["heliosphere"]["ingress"]["openvpn"]["clients"]
+        clients = load_json(os.path.join(self.cfg, "state.json"))["heliosphere"]["ingress"]["openvpn"]["clients"]
         self.assertEqual([(c["name"], c["revoked"]) for c in clients], [("laptop", True), ("phone", False)])
         self.assertIn("Remote access: revoke OpenVPN client laptop", self.helios("pending")["changes"])
         # client keys are not stored anywhere: only the CA and server keys exist on disk
-        keys = [os.path.join(dp, fn) for dp, _, fs in os.walk(self.hs()) for fn in fs if "PRIVATE KEY" in open(os.path.join(dp, fn), errors="ignore").read()]
+        keys = [os.path.join(dp, fn) for dp, _, fs in os.walk(self.hs()) for fn in fs if "PRIVATE KEY" in read_file(os.path.join(dp, fn), errors="ignore")]
         self.assertEqual(sorted(os.path.basename(k) for k in keys), ["ca.key", "server.key"])
 
     def test_remote_proxy_users(self):
@@ -1387,23 +1402,23 @@ class HeliosCtl(unittest.TestCase):
         self.assertIn("16", self.helios("remote-proxy-user", "tv", stdin="short", ok=False)["error"])
         self.helios("remote-proxy-user", "tv", stdin=pw + "\n")
         self.helios("remote-proxy-user", "radio", stdin="another-long-password-1")
-        users = open(self.hs("proxy", "users")).read().splitlines()
+        users = read_file(self.hs("proxy", "users")).splitlines()
         self.assertEqual(len(users), 2)
         self.assertRegex(users[0], r"^tv:CR:\$1\$[./0-9A-Za-z]{1,8}\$[./0-9A-Za-z]{22}$")
         self.assertEqual(oct(os.stat(self.hs("proxy", "users")).st_mode & 0o777), "0o400")   # 3proxy's own account reads it
         h = users[0].split(":", 2)[2]
         chk = subprocess.run([real, "passwd", "-1", "-salt", h.split("$")[2], "-stdin"], input=pw, capture_output=True, text=True)
         self.assertEqual(chk.stdout.strip(), h)
-        argv = open(os.path.join(self.tmp, "argv.log")).read()
+        argv = read_file(os.path.join(self.tmp, "argv.log"))
         self.assertIn("openssl passwd -1 -stdin", argv)
         self.assertNotIn(pw, argv)
-        self.assertNotIn(pw, json.dumps(json.load(open(os.path.join(self.cfg, "state.json")))))
+        self.assertNotIn(pw, json.dumps(load_json(os.path.join(self.cfg, "state.json"))))
         # replacing a password keeps one line per user
         self.helios("remote-proxy-user", "tv", stdin="a-brand-new-password")
-        self.assertEqual(len(open(self.hs("proxy", "users")).read().splitlines()), 2)
+        self.assertEqual(len(read_file(self.hs("proxy", "users")).splitlines()), 2)
         self.helios("remote-set", json.dumps({"ingress": {"proxy": {"enabled": True, "networks": ["iot"]}}}))
         self.helios("remote-proxy-user-remove", "tv")
-        self.assertEqual([x.split(":")[0] for x in open(self.hs("proxy", "users")).read().splitlines()], ["radio"])
+        self.assertEqual([x.split(":")[0] for x in read_file(self.hs("proxy", "users")).splitlines()], ["radio"])
         self.assertIn("at least one user", self.helios("remote-proxy-user-remove", "radio", ok=False)["error"])
         self.assertIn("no proxy user", self.helios("remote-proxy-user-remove", "ghost", ok=False)["error"])
 
@@ -1411,7 +1426,7 @@ class HeliosCtl(unittest.TestCase):
         up = lambda kind, text, ok=True: self.helios("remote-egress-upload", kind, stdin=text, ok=ok)
         r = up("wireguard", WG_OUT)
         self.assertEqual(r["removedDirectives"], ["dns", "postdown", "postup"])
-        stored = open(self.hs("egress", "wg-out.conf")).read()
+        stored = read_file(self.hs("egress", "wg-out.conf"))
         for gone in ("DNS", "PostUp", "PostDown", "iptables"):
             self.assertNotIn(gone, stored)
         self.assertIn("PrivateKey = abc=", stored)
@@ -1423,7 +1438,7 @@ class HeliosCtl(unittest.TestCase):
                 "auth-user-pass /home/me/pass.txt\n<ca>\nCERT\nup not-a-directive\n</ca>\n")
         r = up("openvpn", ovpn)
         self.assertEqual(r["removedDirectives"], ["down", "script-security", "up"])
-        stored = open(self.hs("egress", "client.ovpn")).read()
+        stored = read_file(self.hs("egress", "client.ovpn"))
         self.assertIn("auth-user-pass /var/lib/heliosphere/egress/auth.txt\n", stored)
         self.assertNotIn("/home/me", stored)
         self.assertNotIn("up.sh", stored)
@@ -1436,19 +1451,19 @@ class HeliosCtl(unittest.TestCase):
         r = up("openvpn", 'client\nremote a 1\n--script-security 2\n"up" /x\nu\\p /y\nhttp-proxy p 8080 /etc/shadow\n', ok=False)
         self.assertIn("credentials file", r["error"])
         r = up("openvpn", 'client\nremote a 1\n--script-security 2\n"up" /x\nu\\p /y\n')
-        self.assertNotIn("/x", open(self.hs("egress", "client.ovpn")).read())
+        self.assertNotIn("/x", read_file(self.hs("egress", "client.ovpn")))
         self.assertEqual(r["removedDirectives"], ["script-security", "up"])
         # wg-quick drops "#…" before reading a line, so a comment can't hide a key or a section
         sneaky = WG_OUT.replace("[Interface]", "[Interface] # hi").replace("PostUp =", "PostUp = x #")
-        r = up("wireguard", sneaky)
-        self.assertNotIn("PostUp", open(self.hs("egress", "wg-out.conf")).read())
+        up("wireguard", sneaky)
+        self.assertNotIn("PostUp", read_file(self.hs("egress", "wg-out.conf")))
         self.assertIn("before its [Interface]", up("wireguard", "#\nPostUp = evil\n" + WG_OUT, ok=False)["error"])
         self.assertIn("two lines", up("auth", "just-one", ok=False)["error"])
         up("auth", "alice\nsecret\n")
-        self.assertEqual(open(self.hs("egress", "auth.txt")).read(), "alice\nsecret\n")
+        self.assertEqual(read_file(self.hs("egress", "auth.txt")), "alice\nsecret\n")
         self.assertEqual(oct(os.stat(self.hs("egress", "auth.txt")).st_mode & 0o777), "0o600")
         up("auth", json.dumps({"user": "bob", "password": "pw"}))
-        self.assertEqual(json.load(open(self.hs("egress", "proxy.json"))), {"user": "bob", "password": "pw"})
+        self.assertEqual(load_json(self.hs("egress", "proxy.json")), {"user": "bob", "password": "pw"})
         self.assertIn("proxy credentials", up("auth", '{"user": "x", "extra": 1}', ok=False)["error"])
         self.assertEqual(sorted(self.helios("remote-egress-clear", "auth")["removed"]), ["auth.txt", "proxy.json"])
         self.assertNotIn("abc=", json.dumps(self.helios("pending")))      # secrets never reach the pending output
@@ -1498,14 +1513,14 @@ class HeliosCtl(unittest.TestCase):
     def test_remote_status_live_and_failing(self):
         self.helios("remote-set", json.dumps({"ingress": {"wireguard": {"enabled": True}}}))
         os.makedirs(self.hs("wireguard"))
-        open(self.hs("wireguard", "public"), "w").write("U0VSVkVSUFVCX19fX19fX19fX19fX19fX19fX19fX18=\n")
+        write_file(self.hs("wireguard", "public"), "U0VSVkVSUFVCX19fX19fX19fX19fX19fX19fX19fX18=\n")
         os.makedirs(self.hs("openvpn", "server"))
-        st = json.load(open(os.path.join(self.cfg, "state.json")))
+        st = load_json(os.path.join(self.cfg, "state.json"))
         st["heliosphere"]["ingress"]["wireguard"]["peers"] = [{"name": "pixel", "publicKey": "clientpub-pixel=", "ip": "10.61.0.2"},
                                                                {"name": "idle", "publicKey": "other=", "ip": "10.61.0.3"}]
         st["heliosphere"]["ingress"]["openvpn"]["clients"] = [{"name": "laptop", "serial": "01", "revoked": False},
                                                                {"name": "phone", "serial": "02", "revoked": False}]
-        json.dump(st, open(os.path.join(self.cfg, "state.json"), "w"))
+        write_json(os.path.join(self.cfg, "state.json"), st)
         r = self.helios("remote")
         self.assertTrue(r["enabled"])
         self.assertIsNone(r["publicHost"])

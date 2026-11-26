@@ -3,7 +3,6 @@
 (function () {
   const T = () => Date.now() / 1000;
   const now0 = T();
-  const mac = n => n;
   const devices = [
     { mac: "11:22:33:44:55:66", name: "titan", vlan: "trusted", ip: "10.20.0.10", profile: "admin", blocked: false, media: false, notes: "Home server", mediaServer: { tcp: [8096, 8920], udp: [], networks: ["family"] } },
     { mac: "02:00:00:00:20:11", name: "oberon", vlan: "trusted", ip: "10.20.0.11", profile: "admin", blocked: false, media: false, notes: "Music server", mediaServer: { tcp: [4533], udp: [], networks: [] } },
@@ -179,7 +178,6 @@
     const N = 29; let seed = 0; for (const c of text) seed = (seed * 31 + c.charCodeAt(0)) >>> 0;
     const rand = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
     const finder = (x, y) => x < 8 && y < 8 || x >= N - 8 && y < 8 || x < 8 && y >= N - 8;
-    const ring = (x, y) => { const d = Math.max(Math.abs(x % (N - 7) - 3 + (x >= N - 7 ? 0 : 0)), 0); return d; };
     let d = "";
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       let on;
@@ -264,7 +262,6 @@
   }
   window.__solMock = { rates, setHeliosphere: on => { heliosphereOn = on; } };
 
-  function leaseOf(d) { return d; }
   function devicesOut() {
     const t = T();
     const list = devices.map(d => ({ ...d, known: true, online: !offline.has(d.name) && !d.blocked, neigh_state: "REACHABLE",

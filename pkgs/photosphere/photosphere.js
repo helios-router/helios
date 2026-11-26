@@ -453,7 +453,7 @@ function viewOverview(root) {
   const left = h("div", { class: "grid" }), right = h("div", { class: "grid" });
   const rebootBox = h("div");
   root.append(rebootBox, tiles, h("div", { class: "grid g-main" }, left, right));
-  const drawReboot = () => api("reboot-status").then(r => rebootBox.replaceChildren(rebootBanner(r, drawReboot))).catch(() => {});
+  const drawReboot = () => api("reboot-status").then(r => rebootBox.replaceChildren(rebootBanner(r))).catch(() => {});
   drawReboot();
   const liveDown = h("span"), liveUp = h("span");
   let lastSt = null, upsInfo = null;      // upsInfo: {device, info} once `hardware` reports a UPS
@@ -988,7 +988,6 @@ function viewHistory(root) {
   const host = h("div", { class: "grid g-main" });
   root.append(host);
   const load = () => api("history").then(r => {
-    const now = Date.now() / 1000;
     const days = [...Array(7)].map((_, i) => {
       const start = new Date(); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - (6 - i));
       const t0 = start / 1000, t1 = t0 + 86400;
@@ -2169,6 +2168,7 @@ function viewPrinting(root) {
       .catch(e => results.replaceChildren(h("span", { class: "muted small" }, e.message)));
     drawModel(); search(found ? (found.label.split(" ")[0] || "") : "");
     const text = (key, attrs = {}) => h("input", { type: "text", value: m[key] || "", autocomplete: "off", ...attrs, oninput: ev => { m[key] = ev.target.value.trim(); } });
+    let uriIn;   // the connection field; the picker above it fills it in
     modal({ title: isNew ? "Add printer" : `Edit ${x.description || x.name}`, wide: true, body: [err,
       h("div", { style: "display:grid;grid-template-columns:2fr 1fr;gap:0 16px" },
         h("label", { class: "field" }, h("span", {}, "Name people see"), text("description", { placeholder: "e.g. Office laser" })),
@@ -2191,7 +2191,6 @@ function viewPrinting(root) {
         h("span", { class: "spacer" }),
         !isNew ? h("button", { class: "btn btn-link", style: "color:var(--bad)", onclick: () => confirmDialog(`Remove ${x.description || x.name}?`, "The printer disappears from every device when you apply.", "Remove printer", true)
           .then(ok => ok && api("printer-remove", x.name).then(() => { close(); hwSaved(`${x.description || x.name} removed`, load); }).catch(e => hwShowErr(err, e))) }, "Remove printer") : null] });
-    var uriIn;
   }
   root.append(h("div", { class: "loading" }, "Loading…"));
   load();
