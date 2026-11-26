@@ -16,6 +16,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CTL = os.path.join(HERE, "..", "pkgs", "helios-ctl.py")
 STUBS = os.path.join(HERE, "stubs")
 
+
+def read_file(path):
+    with open(path) as f:
+        return f.read()
+
 WG_OUT = """[Interface]
 PrivateKey = abc=
 Address = 10.2.0.2/32
@@ -1438,7 +1443,7 @@ class HeliosCtl(unittest.TestCase):
     def test_remote_egress_upload_reads_like_openvpn(self):
         """Regressions found by fuzzing (tests/fuzz): the sanitiser must read a file the way OpenVPN does."""
         up = lambda kind, text, ok=True: self.helios("remote-egress-upload", kind, stdin=text, ok=ok)
-        stored = lambda: open(self.hs("egress", "client.ovpn")).read()
+        stored = lambda: read_file(self.hs("egress", "client.ovpn"))
         head = "client\nremote vpn.example.com 1194\n"
         # OpenVPN ends <ca> at the first line STARTING with </ca>, so "</ca>junk" closed it and "up" ran
         self.assertIn("unexpected", up("openvpn", head + "<ca>\nX\n</ca>junk\nscript-security 2\nup /bin/sh\n</ca>\n", ok=False)["error"])
@@ -1470,7 +1475,7 @@ class HeliosCtl(unittest.TestCase):
         # wg-quick reads a line without "=" as a key too
         r = up("wireguard", WG_OUT.replace("[Peer]", "Table\nPostUp\n[Peer]"))
         self.assertEqual(r["removedDirectives"], ["dns", "postdown", "postup", "table"])
-        self.assertNotIn("Table", open(self.hs("egress", "wg-out.conf")).read())
+        self.assertNotIn("Table", read_file(self.hs("egress", "wg-out.conf")))
         # Not UTF-8: a clean refusal, not a traceback
         p = subprocess.run([sys.executable, CTL, "remote-egress-upload", "openvpn"], capture_output=True, env=self.env, input=b"client\n\xff\n")
         self.assertIn("not UTF-8", json.loads(p.stdout)["error"])

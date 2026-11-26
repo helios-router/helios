@@ -4185,9 +4185,11 @@ def egress_upload(kind, raw):
         fail("That doesn't look like a configuration file (not UTF-8 text)")
     text = text.replace("\r\n", "\n")
     if kind == "wireguard":
-        return ("wg-out.conf", *clean_wg_conf(text))
+        body, dropped = clean_wg_conf(text)
+        return "wg-out.conf", body, dropped
     if kind == "openvpn":
-        return ("client.ovpn", *clean_ovpn_conf(text))
+        body, dropped = clean_ovpn_conf(text)
+        return "client.ovpn", body, dropped
     if text.strip().startswith("{"):                # proxy credentials
         try:
             j = json.loads(text)
