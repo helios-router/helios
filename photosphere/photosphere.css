@@ -386,3 +386,8 @@ th.pause-col, td.pause-col { width: 1%; padding-right: 0; }
 .btn-icon.state-running::before { border-left: 9px solid currentColor; border-top: 5.5px solid transparent; border-bottom: 5.5px solid transparent; margin-left: 2px; }
 .btn-icon.state-paused::before { width: 3px; height: 10px; border-left: 3px solid currentColor; border-right: 3px solid currentColor; }
 .badge.restricted { background: var(--warn-soft); color: var(--warn); }
+/* Switches never shrink next to long text; multi-line labels align to the top */
+.switch input { flex: none; }
+.switch:has(> span > div), .modal .switch { align-items: flex-start; }
+.modal .switch input { margin-top: 1px; }
+.field > .help { display: block; }
