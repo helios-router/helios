@@ -83,9 +83,7 @@ h3 { font-size: 14px; font-weight: 600; }
 .brand { display: flex; align-items: center; gap: 12px; padding-bottom: 12px; }
 .brand h1 { font-size: 22px; line-height: 1.1; }
 .brand .sub { color: var(--text-2); font-size: 13px; }
-.brand-mark { width: 34px; height: 34px; }
-.brand-mark circle { fill: #f2a600; }
-.brand-mark .rays path { stroke: #f2a600; stroke-width: 2.2; stroke-linecap: round; fill: none; }
+.brand-mark { width: 40px; height: 40px; flex: none; }
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
 .tabs a { color: var(--text-2); padding: 10px 14px; border-bottom: 3px solid transparent; font-weight: 500;
   display: inline-flex; gap: 6px; align-items: center; }

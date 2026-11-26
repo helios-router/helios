@@ -1,6 +1,6 @@
 /* Photosphere — HeliOS's pages in Cockpit.
  *
- * Everything privileged goes through `sol-ctl` (JSON in, JSON out), run with
+ * Everything privileged goes through `helios-ctl` (JSON in, JSON out), run with
  * Cockpit's superuser channel. Patterns borrowed from router UIs:
  *   - OPNsense: dashboard widgets, services widget, config history + restore,
  *               "pending changes / Apply" banner
@@ -96,7 +96,7 @@ function fmtTime(ts, withDate = true) {
   return withDate ? d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
     : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
-function parseRate(str) {  // "900mbit" → bits/s
+function parseRate(str) {  // "500mbit" → bits/s
   const m = /^(\d+(?:\.\d+)?)(kbit|mbit|gbit)$/.exec(str || "");
   if (!m) return null;
   return Number(m[1]) * { kbit: 1e3, mbit: 1e6, gbit: 1e9 }[m[2]];
@@ -140,7 +140,7 @@ function applyTheme() {
       ...(dark ? [s("circle", { cx: 12, cy: 12, r: 4 }), s("path", { d: "M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" })]
         : [s("path", { d: "M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" })])));
   }
-  document.dispatchEvent(new CustomEvent("sol-samples"));   // charts redraw
+  document.dispatchEvent(new CustomEvent("helios-samples"));   // charts redraw
 }
 window.addEventListener("storage", applyTheme);
 $("#theme-btn").addEventListener("click", () => {
@@ -160,7 +160,7 @@ function apiInput(input, ...args) {
     .then(out => {
       $("#access").hidden = true;
       const data = JSON.parse(out);
-      if (!data.ok) throw new Error(data.error || "sol-ctl failed");
+      if (!data.ok) throw new Error(data.error || "helios-ctl failed");
       return data;
     }, ex => {
       if (ex && (ex.problem === "access-denied" || ex.problem === "not-authorized")) $("#access").hidden = false;
@@ -178,7 +178,7 @@ const samples = {};          // iface → [{t, down, up}] in bits/s, user's pers
 let lastCounters = null;
 const HISTORY = 90;          // 3 minutes at 2 s
 function dirOf(iface, rx, tx) {
-  // WAN: rx is download. LAN/VLAN: sol transmits what devices download.
+  // WAN: rx is download. LAN/VLAN: the router transmits what devices download.
   return iface === "wan" ? { down: rx, up: tx } : { down: tx, up: rx };
 }
 function sampleCounters() {
@@ -197,7 +197,7 @@ function sampleCounters() {
       }
     }
     lastCounters = c;
-    document.dispatchEvent(new CustomEvent("sol-samples"));
+    document.dispatchEvent(new CustomEvent("helios-samples"));
   }).catch(() => {});
 }
 setInterval(sampleCounters, 2000);
@@ -401,7 +401,7 @@ function openApplyModal() {
     logEl.textContent = (r.log || []).join("\n");
     logEl.scrollTop = logEl.scrollHeight;
     if (st.state === "running") {
-      status.replaceChildren(h("div", {}, "Rebuilding sol with your changes. This usually takes under a minute."),
+      status.replaceChildren(h("div", {}, "Rebuilding the router with your changes. This usually takes under a minute."),
         h("ul", { class: "small" }, (st.changes || []).map(c => h("li", {}, c))), h("div", { class: "progress" }, h("i")));
       setFoot(h("span", { class: "muted small" }, "You can close this page — the rebuild keeps running."));
     } else if (st.state === "confirm") {
@@ -411,7 +411,7 @@ function openApplyModal() {
         h("div", { class: "countdown" },
           h("div", { class: "big" }, `${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, "0")}`),
           h("div", {}, h("strong", {}, "Keep these changes?"),
-            h("div", { class: "small" }, "If you don't confirm, sol rolls back on its own — so a change that cuts you off fixes itself."))));
+            h("div", { class: "small" }, "If you don't confirm, the router rolls back on its own — so a change that cuts you off fixes itself."))));
       setFoot(
         h("button", { class: "btn btn-primary", onclick: () => api("confirm").then(() => { toast("Changes kept and saved to history"); done(); }) }, "Keep changes"),
         h("button", { class: "btn btn-link", onclick: () => api("rollback").then(() => { toast("Rolled back"); }) }, "Revert now"));
@@ -427,7 +427,7 @@ function openApplyModal() {
     } else if (st.state === "done") {
       done();
     }
-  }).catch(() => status.replaceChildren(statusEl("warn", "Lost contact with sol — retrying…")));
+  }).catch(() => status.replaceChildren(statusEl("warn", "Lost contact with the router — retrying…")));
   timer = setInterval(poll, 1000);
   poll();
 }
@@ -436,10 +436,10 @@ function openApplyModal() {
 let viewTimers = [];
 let viewListeners = [];
 function every(ms, fn) { viewTimers.push(setInterval(fn, ms)); }
-function onSamples(fn) { document.addEventListener("sol-samples", fn); viewListeners.push(fn); }
+function onSamples(fn) { document.addEventListener("helios-samples", fn); viewListeners.push(fn); }
 function cleanupView() {
   viewTimers.forEach(clearInterval); viewTimers = [];
-  viewListeners.forEach(fn => document.removeEventListener("sol-samples", fn)); viewListeners = [];
+  viewListeners.forEach(fn => document.removeEventListener("helios-samples", fn)); viewListeners = [];
   hideTip();
 }
 const card = (title, right, ...body) => h("section", { class: "card" },
@@ -838,7 +838,7 @@ function viewQos(root) {
   const form = h("div"), stats = h("div", { class: "grid g-2" });
   root.append(h("div", { class: "grid" }, stats, form));
   let settings = null, loaded = false;
-  // Choices with a one-line explanation each (keys match helios-ctl / modules/extras.nix)
+  // Choices with a one-line explanation each (keys match helios-ctl / modules/voyager.nix)
   const LINKS = [["docsis", "Cable", "DOCSIS cable modem (Spectrum, Comcast, Virgin…)."], ["ethernet", "Ethernet / fibre", "Fibre ONT, Ethernet handoff, or unsure."],
     ["vdsl", "VDSL", "Phone-line VDSL/VDSL2 (PTM)."], ["adsl", "ADSL", "Older phone-line ADSL (ATM cells)."], ["custom", "Custom", "Set the overhead yourself."]];
   const FAIRS = [["device", "Per device", "Each home device gets an even share, then its own connections share that. Best for most homes."],
@@ -2301,7 +2301,7 @@ function rerender() {
 }
 window.addEventListener("hashchange", rerender);
 let resizeT = null;
-window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(() => document.dispatchEvent(new CustomEvent("sol-samples")), 150); });
+window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(() => document.dispatchEvent(new CustomEvent("helios-samples")), 150); });
 
 api("status").then(st => {
   RESERVED = ["heliosphere", ...(st.reservedNames || [])];

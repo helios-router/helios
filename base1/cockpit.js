@@ -1,4 +1,4 @@
-/* Test double for Cockpit's cockpit.js: answers sol-ctl calls with realistic,
+/* Test double for Cockpit's cockpit.js: answers helios-ctl calls with realistic,
    stateful demo data so the pages can be rendered and screenshotted offline. */
 (function () {
   const T = () => Date.now() / 1000;
@@ -55,7 +55,7 @@
     { proto: "UDP", ext_port: 88, ip: "10.30.0.24", int_port: 88, expires: T0 + 2900, desc: "Xbox Live" },
     { proto: "TCP", ext_port: 27036, ip: "10.30.0.22", int_port: 27036, expires: null, desc: "Steam" },
     { proto: "TCP", ext_port: 8443, ip: "10.30.0.117", int_port: 8443, expires: null, desc: "IPCam remote view" }];
-  let qos = { enabled: true, down: "900mbit", up: "35mbit", algorithm: "cake", link: "docsis", overhead: 38, mpu: 84, atm: false,
+  let qos = { enabled: true, down: "500mbit", up: "50mbit", algorithm: "cake", link: "docsis", overhead: 38, mpu: 84, atm: false,
     fairness: "device", priority: "diffserv3", ackFilter: true, rtt: "internet", wash: true }, upnp = { enabled: true }, qos0 = { ...qos }, upnp0 = { ...upnp };
   let apply = {};
   // Roles + default networks: the real pkgs/networks.json (demo.sh serves it next to the page)
@@ -329,17 +329,17 @@
         const list = devicesOut();
         const counts = Object.fromEntries(networks.map(n => [n.name, 0]));
         list.filter(d => d.online).forEach(d => counts[d.lease_vlan]++);
-        return { ok: true, hostname: "sol", domain: "home.arpa", reservedNames: ["sol", "heliosphere"],
+        return { ok: true, hostname: "helios", domain: "home.arpa", reservedNames: ["helios", "heliosphere"],
           solarWind: { enabled: true, exposure: "proxy", url: "https://alerts.example.com", configured: true }, uptime: 86400 * 6 + 3600 * 4 + 1260, load: [0.42, 0.37, 0.31], memory: { total: 8.2e9, used: 3.1e9 },
           wan: { ifname: "wan", up: true, ipv4: "98.42.17.201/22", ipv6: "2600:6c50:7f:1a::1/128", gateway: "98.42.16.1" },
           uplink: { state: "up", since: outages[2].up_at, last_outage: outages[2], outages_24h: 1 },
           vlans: networks.map(n => ({ name: n.name, id: n.vlan, gateway: `${n.prefix}.1`, clients: counts[n.name] || 0 })),
           devices: { total: list.length, new: list.filter(d => !d.known).length, named: devices.length, blocked: devices.filter(d => d.blocked).length },
-          services: [["kea-dhcp4-server", "DHCP"], ["adguardhome", "Magnetosphere (DNS filter)"], ["nftables", "Heliopause (firewall)"], ["sol-sqm", "QoS"], ["miniupnpd", "UPnP"], ["chronyd", "NTP"],
+          services: [["kea-dhcp4-server", "DHCP"], ["adguardhome", "Magnetosphere (DNS filter)"], ["nftables", "Heliopause (firewall)"], ["helios-sqm", "QoS"], ["miniupnpd", "UPnP"], ["chronyd", "NTP"],
             ["tailscaled", "Tailscale (admin exit)"], ["container@heliosphere", "Heliosphere (family exit)"], ["ntfy-sh", "Notifications (ntfy)"], ["cups", "Printing"], ["llama-cpp", "Log AI"],
-            ["logwatch.timer", "Log watcher"], ["sol-uplink.timer", "Outage monitor"], ["sol-backup.timer", "Config backup"]].map(([u, l]) => ({
-            unit: u, label: l, active: "active", sub: u.endsWith(".timer") ? "waiting" : u === "nftables" || u === "sol-sqm" ? "exited" : "running", loaded: true })),
-          qos, upnp: { ...upnp, mappings: 3 }, tailscale: { online: true, name: "sol", ips: ["100.101.12.7"], peers_online: 6, peers: 9 },
+            ["logwatch.timer", "Log watcher"], ["helios-uplink.timer", "Outage monitor"], ["helios-backup.timer", "Config backup"]].map(([u, l]) => ({
+            unit: u, label: l, active: "active", sub: u.endsWith(".timer") ? "waiting" : u === "nftables" || u === "helios-sqm" ? "exited" : "running", loaded: true })),
+          qos, upnp: { ...upnp, mappings: 3 }, tailscale: { online: true, name: "helios", ips: ["100.101.12.7"], peers_online: 6, peers: 9 },
           pending: changes().length > 0, apply };
       }
       case "networks": return { ok: true, networks: networks.map(netView), roles: CAT.roles, access: CAT.access, wanVlan: 10 };
@@ -568,7 +568,7 @@
       case "apply-start": apply = { state: "running", started: t, changes: changes() }; setTimeout(() => { apply = { ...apply, state: "confirm", deadline: T() + 120 }; }, 2500); return { ok: true };
       case "apply-status": return { ok: true, apply: { ...apply, remaining: apply.deadline ? Math.max(0, apply.deadline - T()) : undefined }, log: [
         "[10:41:02] nixos-rebuild switch …", "building the system configuration...", "these 4 derivations will be built:",
-        "  /nix/store/9xk2…-kea-dhcp4.conf.drv", "  /nix/store/1mfa…-nftables-rules.drv", "  /nix/store/q8c1…-hosts.drv", "  /nix/store/vz0d…-nixos-system-sol-25.11.drv",
+        "  /nix/store/9xk2…-kea-dhcp4.conf.drv", "  /nix/store/1mfa…-nftables-rules.drv", "  /nix/store/q8c1…-hosts.drv", "  /nix/store/vz0d…-nixos-system-helios-25.11.drv",
         "activating the configuration...", "setting up /etc...", "reloading the following units: nftables.service", "restarting the following units: kea-dhcp4-server.service",
         ...(apply.state === "confirm" ? ["[10:41:39] Syncing AdGuard client profiles …", "[10:41:39] Magnetosphere (AdGuard): 1 added, 15 updated, 0 removed", "[10:41:39] Applied. Waiting for confirmation (auto-rollback in 120s)."] : [])] };
       case "confirm": restrictUnnamed0 = restrictUnnamed; maint0 = JSON.parse(JSON.stringify(maint)); lwState0 = JSON.parse(JSON.stringify(lwState)); svcOver0 = { ...svcOver }; printing0 = JSON.parse(JSON.stringify(printing)); committed = JSON.parse(JSON.stringify(devices)); profiles0 = JSON.parse(JSON.stringify(profiles)); networks0 = JSON.parse(JSON.stringify(networks)); qos0 = { ...qos }; upnp0 = { ...upnp }; drivers0 = JSON.parse(JSON.stringify(drivers)); hardware0 = JSON.parse(JSON.stringify(hardware)); remote0 = JSON.parse(JSON.stringify(remote)); apply = { state: "done" }; return { ok: true };
@@ -662,7 +662,7 @@
         const d = JSON.parse(rest[0]), q = { ...qos, ...d };
         const ch = { algorithm: ["cake", "fq_codel"], link: ["docsis", "ethernet", "vdsl", "adsl", "custom"], fairness: ["device", "triple", "flow"], priority: ["diffserv4", "diffserv3", "besteffort"], rtt: ["internet", "regional", "metro"] };
         for (const [k, v] of Object.entries(ch)) if (!v.includes(q[k])) return { ok: false, error: `${k} must be one of ${v.join(", ")}` };
-        for (const k of ["down", "up"]) if (q[k] !== null && !/^\d+(\.\d+)?(kbit|mbit|gbit)$/.test(q[k])) return { ok: false, error: `${k} rate must look like 900mbit or 35mbit` };
+        for (const k of ["down", "up"]) if (q[k] !== null && !/^\d+(\.\d+)?(kbit|mbit|gbit)$/.test(q[k])) return { ok: false, error: `${k} rate must look like 500mbit or 50mbit` };
         if (q.enabled && (!q.down || !q.up)) return { ok: false, error: "set both rates before turning QoS on (Suggest settings can measure them)" };
         qos = q; return { ok: true, settings: qos, dirty: true };
       }
@@ -679,8 +679,8 @@
           detected: { cableModem: true, trunkMbps: 2500 } }), measured ? 2500 : 400));
       }
       case "qos": return { ok: true, settings: qos,
-        upload: qos.enabled ? { dev: "wan", bandwidth: 4375000, drops: 1203, tins: [tin(273437, 12.3e6, 180, 2101, 3, 0), tin(4375000, 9.01e9, 1350, 8400, 1190, 12), tin(1093750, 98.7e6, 410, 3020, 10, 0)] } : null,
-        download: qos.enabled ? { dev: "ifb4wan", bandwidth: 112500000, drops: 5021, tins: [tin(7031250, 81.2e6, 120, 1802, 2, 0), tin(112500000, 479.1e9, 940, 6120, 5011, 44), tin(28125000, 1.29e9, 300, 2440, 8, 0)] } : null };
+        upload: qos.enabled ? { dev: "wan", bandwidth: 6250000, drops: 1203, tins: [tin(390625, 12.3e6, 180, 2101, 3, 0), tin(6250000, 9.01e9, 1350, 8400, 1190, 12), tin(1562500, 98.7e6, 410, 3020, 10, 0)] } : null,
+        download: qos.enabled ? { dev: "ifb4wan", bandwidth: 62500000, drops: 5021, tins: [tin(3906250, 81.2e6, 120, 1802, 2, 0), tin(62500000, 479.1e9, 940, 6120, 5011, 44), tin(15625000, 1.29e9, 300, 2440, 8, 0)] } : null };
       case "upnp": {
         const ipName = Object.fromEntries(devices.map(d => [d.ip, d.name]));
         const why = m => { const bd = (upnp.blockedDevices || []).find(n => ipName[m.ip] === n); if (bd) return `device ${bd} is blocked`;
@@ -718,11 +718,11 @@
       }
       case "notify-test": return { ok: true };
       case "notify-recent": return { ok: true, messages: [
-        { kind: "aurora", time: t - 600, title: "Test from sol", message: "This is a test aurora notification from HeliOS.", priority: 3 },
-        { kind: "flare", time: t - 3600 * 3, title: "sol: critical log events", message: "kernel: heliopause-trap: IN=iot SRC=10.40.0.104 DST=10.40.0.1 PROTO=TCP DPT=22", priority: 5 },
-        { kind: "aurora", time: t - 3600 * 6 + 187, title: "Internet is back", message: "sol: internet was down for 3m 7s (from 16:11).", priority: 3 },
-        { kind: "aurora", time: t - 3600 * 20, title: "sol: medium log warning", message: "kea-dhcp4-server reported repeated DHCPDECLINE messages from one IoT device — likely an IP conflict.", priority: 3 },
-        { kind: "flare", time: t - 86400 * 2, title: "sol: critical log events", message: "r8152 2-1:1.0 trunk0: USB disconnect, device number 3", priority: 5 },
+        { kind: "aurora", time: t - 600, title: "Test from helios", message: "This is a test aurora notification from HeliOS.", priority: 3 },
+        { kind: "flare", time: t - 3600 * 3, title: "helios: critical log events", message: "kernel: heliopause-trap: IN=iot SRC=10.40.0.104 DST=10.40.0.1 PROTO=TCP DPT=22", priority: 5 },
+        { kind: "aurora", time: t - 3600 * 6 + 187, title: "Internet is back", message: "helios: internet was down for 3m 7s (from 16:11).", priority: 3 },
+        { kind: "aurora", time: t - 3600 * 20, title: "helios: medium log warning", message: "kea-dhcp4-server reported repeated DHCPDECLINE messages from one IoT device — likely an IP conflict.", priority: 3 },
+        { kind: "flare", time: t - 86400 * 2, title: "helios: critical log events", message: "r8152 2-1:1.0 trunk0: USB disconnect, device number 3", priority: 5 },
       ] };
       case "backup": return { ok: true, changed: false, time: t, pushed: true };
       default: return { ok: false, error: `mock: unknown command ${cmd}` };
