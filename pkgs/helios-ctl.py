@@ -1364,8 +1364,10 @@ def cmd_logwatch_set(a):
             if v not in list(LW_CATALOG.get("presets", {})) + ["custom", "site"]:
                 fail("model must be a preset, custom or site")
         elif k == "customPath":
-            if v is not None and (not isinstance(v, str) or ".." in v or not re.fullmatch(r"/[A-Za-z0-9._/-]+\.gguf", v)):
-                fail("customPath must be an absolute path to a .gguf file")
+            # Only root can write /var/lib/llm (and the llm account only reads it), so a model
+            # there can't be swapped by anyone else; a path elsewhere could be
+            if v is not None and (not isinstance(v, str) or not re.fullmatch(r"/var/lib/llm/[A-Za-z0-9_-][A-Za-z0-9._-]*\.gguf", v)):
+                fail("customPath must be a .gguf file directly in /var/lib/llm, like /var/lib/llm/my-model.gguf")
         elif k == "backend":
             if v not in LW_BACKENDS:
                 fail(f"backend must be one of {', '.join(LW_BACKENDS)}")

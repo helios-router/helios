@@ -419,9 +419,11 @@ class HeliosCtl(unittest.TestCase):
         self.assertEqual((r["settings"]["model"], r["settings"]["interval"], r["settings"]["guard"]["pauseHours"], r["settings"]["guard"]["cpuPressure"]), ("medium", 30, 2, 40))
         self.assertIn("Change AI log triage settings", self.helios("pending")["changes"])
         for bad, msg in (({"model": "huge"}, "model must be"), ({"interval": 1}, "interval"), ({"backend": "tpu"}, "backend"),
-                         ({"customPath": "../x.gguf"}, "absolute path"), ({"model": "custom"}, "needs customPath"), ({"guard": {"cpuPressure": 0}}, "cpuPressure"),
+                         ({"customPath": "../x.gguf"}, "/var/lib/llm"), ({"customPath": "/tmp/x.gguf"}, "/var/lib/llm"), ({"customPath": "/var/lib/llm/../x.gguf"}, "/var/lib/llm"), ({"customPath": "/var/lib/llm/sub/x.gguf"}, "/var/lib/llm"), ({"customPath": "/var/lib/llm/.x.gguf"}, "/var/lib/llm"), ({"model": "custom"}, "needs customPath"), ({"guard": {"cpuPressure": 0}}, "cpuPressure"),
                          ({"nope": 1}, "unknown setting")):
             self.assertIn(msg, self.helios("logwatch-set", json.dumps(bad), ok=False)["error"])
+        r = self.helios("logwatch-set", json.dumps({"model": "custom", "customPath": "/var/lib/llm/my-model.gguf"}))
+        self.assertEqual(r["settings"]["customPath"], "/var/lib/llm/my-model.gguf")
         self.assertEqual(self.helios("logwatch-reset")["settings"]["model"], "small")
         import importlib.util
         spec = importlib.util.spec_from_file_location("helios_ctl_lw", CTL)

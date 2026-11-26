@@ -70,6 +70,12 @@ lib.mkMerge [
   ];
 }
 (lib.mkIf (cfg.internal.on "logwatch") {
+  # helios-ctl only accepts these; this catches a hand-edited state.json
+  assertions = [{
+    assertion = st.model != "custom" || st.customPath == null
+      || builtins.match "/var/lib/llm/[A-Za-z0-9_-][A-Za-z0-9._-]*[.]gguf" st.customPath != null;
+    message = "state.json logwatch: customPath must be a .gguf file directly in /var/lib/llm";
+  }];
   hardware.graphics.enable = lib.mkIf (lw.backend == "vulkan") true;
 
   services.llama-cpp = lib.mkIf local {
@@ -103,6 +109,9 @@ lib.mkMerge [
     serviceConfig = {
       Slice = "helios-ai.slice";
       DynamicUser = lib.mkForce false;              # the fixed llm account owns the models
+      # It only answers logwatch on 127.0.0.1:8090: even a hostile model file can't reach out
+      IPAddressDeny = "any";
+      IPAddressAllow = "localhost";
       User = "llm";
       Group = "llm";
       SupplementaryGroups = [ "render" "video" ];   # /dev/dri/renderD128

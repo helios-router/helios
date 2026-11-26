@@ -212,7 +212,7 @@ Overrides of the defaults in `pkgs/logwatch-models.json`.
 
 | Field | Default | Allowed |
 |---|---|---|
-| `model` | `small` | a preset id, `custom` (needs `customPath`, an absolute `.gguf` path) or `site` |
+| `model` | `small` | a preset id, `custom` (needs `customPath`, a `.gguf` file directly in `/var/lib/llm`, so only root can replace it) or `site` |
 | `backend` | `site` | `site`, `vulkan`, `cpu`, `remote` |
 | `interval` | `10` | minutes, 5 to 240 |
 | `keepLoaded` | `false` | keep the model in memory between runs |
