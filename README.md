@@ -89,8 +89,10 @@ an out-of-band rescue port.
 points if you use Wi-Fi), and NixOS 25.11 or newer. Tailscale or a Headscale server is
 optional.
 
-**Installer:** build the ISO with `nix build .#installer-iso` (or download it from a
-CI run on `main`), boot it, plug in a cable with internet and run `sudo helios-install`.
+**Installer:** build the ISO with `nix build --impure .#installer-iso` (or download it from a
+CI run on `main`), boot it and run `sudo helios-install`. No internet is needed: the
+image carries everything for a standard install. (`.#installer-iso-netinstall` is a
+much smaller image that downloads it all during the install instead.)
 It asks for the disk, filesystem, hostname, admin user, trunk port and optional
 services, writes `/etc/nixos` as a git repository and installs. Nothing is erased
 until you type the disk's name.

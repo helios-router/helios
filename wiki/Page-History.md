@@ -57,6 +57,65 @@ What a backup does: it copies AdGuard Home's settings file (which you change in 
 
 The same backup button exists on [Advanced](Page-Advanced).
 
+### What a backup contains
+
+The whole `/etc/nixos` repository: `site.nix` (admin user name, SSH *public* keys, MAC
+addresses), `state.json` (device names, MACs and fixed addresses, your networks,
+remote-access settings and user names) and the AdGuard copy. Before the AdGuard copy is
+committed, `helios-ctl backup` replaces its admin password hash, any inline TLS private
+key and any `user:password@` in upstream URLs with `REDACTED`. If you ever restore that
+file by hand, keep the live file's values for those lines.
+
+Private keys, passwords and tokens (Tailscale auth key, WireGuard and OpenVPN keys,
+proxy and notification passwords) live under `/var/lib` and are never in the
+repository. So a backup reveals your network's layout and device names, but no
+credentials.
+
+### Setting up an off-site copy (private GitHub repository)
+
+The nightly backup pushes to the repository's `origin` remote if one is set. A private
+GitHub repository works well; set it up so that a compromised router can't do more
+than add commits to that one repository:
+
+1. **Create a private repository in your personal account** (not a public
+   organization), with nothing in it. Don't add GitHub Actions or apps to it.
+2. **Make a deploy key on the router** (the backup runs as root):
+   ```sh
+   sudo ssh-keygen -t ed25519 -N "" -C "helios-backup" -f /root/.ssh/helios-backup
+   sudo cat /root/.ssh/helios-backup.pub
+   ```
+   In the repository: **Settings → Deploy keys → Add deploy key**, paste the public
+   key and tick **Allow write access**. A deploy key works for this one repository
+   only, unlike your personal SSH key or a token.
+3. **Point root's SSH at it** by adding to `/root/.ssh/config`:
+   ```
+   Host helios-backup
+     HostName github.com
+     User git
+     IdentityFile /root/.ssh/helios-backup
+     IdentitiesOnly yes
+   ```
+   and accept GitHub's host key once: `sudo ssh -T helios-backup` (compare the
+   fingerprint with the ones GitHub publishes in its documentation).
+4. **Add the remote and push once:**
+   ```sh
+   cd /etc/nixos
+   sudo git remote add origin helios-backup:<you>/<repo>.git
+   sudo git push -u origin HEAD
+   ```
+5. **Protect the history.** In the repository: **Settings → Rules → Rulesets → New
+   branch ruleset**, target the default branch, enable **Block force pushes** and
+   **Restrict deletions**, and leave the bypass list empty. Now even someone with the
+   router's key can't erase or rewrite earlier backups.
+6. **Use two-factor authentication on your GitHub account**, ideally a hardware key:
+   the account is what really guards the backups.
+
+Then press **Back up now**; the card should show "Pushed to git remote".
+
+If you'd rather GitHub never sees the network layout at all, encrypt the repository
+before pushing (for example with git-crypt or age). The catch: restoring then needs a
+key you keep somewhere else, offline.
+
 ## System generations card
 
 Lists the newest 6 NixOS system builds (generation number and date). The one marked **Running** is the generation the router's system profile currently points to, which is the latest applied build, not necessarily the one you booted into (after a kernel update, the booted kernel can be older until you reboot).
@@ -69,6 +128,6 @@ Below: "Older generations are also in the boot menu. `nixos-rebuild switch --rol
 - `pkgs/helios-ctl.py:2379-2395`: `history` (`git log -n 60`, `nix-env --list-generations` for generations, outages tail of 100, `backup.json`).
 - `pkgs/helios-ctl.py:850-860`: `restore` (writes `git show <rev>:state.json` over the working copy).
 - `pkgs/helios-ctl.py:927-938`: `confirm` creates the commit; `:779-801` pause/resume commit.
-- `pkgs/helios-ctl.py:2397-2420`: `backup`.
+- `pkgs/helios-ctl.py:2405-2455`: `redact_adguard` and `backup`.
 - `pkgs/helios-ctl.py:2365-2377` and `:2599-2630`: outage log (`/var/lib/helios/outages.jsonl`) and `uplink-check`.
 - `modules/photosphere.nix:44-69`: `helios-uplink` (every 30 s) and `helios-backup` (03:17) timers.

@@ -675,9 +675,22 @@ class HeliosCtl(unittest.TestCase):
         self.assertEqual(v["interfaces"][0]["name"], "wan")
 
     def test_backup_commits_adguard_yaml(self):
+        with open(os.path.join(self.fake, "var/lib/AdGuardHome/AdGuardHome.yaml"), "w") as f:
+            f.write(
+                "http:\n  address: 0.0.0.0:3000\nusers:\n  - name: admin\n    password: $2a$10$secrethashsecrethash\n"
+                "tls:\n  private_key: |-\n    -----BEGIN PRIVATE KEY-----\n    c2VjcmV0\n    -----END PRIVATE KEY-----\n"
+                "  certificate_chain: \"\"\ndns:\n  upstream_dns:\n    - https://me:hunter2@dns.example.com/dns-query\n")
         r = self.helios("backup")
         self.assertTrue(r["changed"])
-        self.assertTrue(os.path.exists(os.path.join(self.cfg, "backups/adguard/AdGuardHome.yaml")))
+        with open(os.path.join(self.cfg, "backups/adguard/AdGuardHome.yaml")) as f:
+            saved = f.read()
+        for secret in ("secrethash", "PRIVATE KEY", "c2VjcmV0", "hunter2"):
+            self.assertNotIn(secret, saved)
+        self.assertIn("password: REDACTED", saved)
+        self.assertIn("private_key: REDACTED", saved)
+        self.assertIn("https://REDACTED@dns.example.com/dns-query", saved)
+        self.assertIn("address: 0.0.0.0:3000", saved)        # the rest is kept
+        self.assertIn("certificate_chain: \"\"", saved)
         self.assertFalse(self.helios("backup")["changed"])   # idempotent
         self.assertEqual(self.helios("history")["commits"][0]["subject"], "Backup: AdGuard settings")
 
