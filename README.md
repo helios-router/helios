@@ -104,6 +104,13 @@ open Photosphere at `https://<router>:9090`. The
 [Installation](https://github.com/helios-router/helios/wiki/Installation) page walks
 through each step.
 
+> **Tailscale is an admin door.** The router trusts everything that arrives on its own
+> Tailscale interface like an admin network: it can reach every network and the
+> router's admin pages. Who gets in is decided only by your tailnet policy, and a new
+> tailnet's default policy lets *every* device in. Merge
+> [`templates/tailnet-policy.hujson`](templates/tailnet-policy.hujson) into yours
+> before you add the auth key.
+
 ## Updates
 
 Routers update with `nix flake update helios` followed by `nixos-rebuild switch`. Here, a weekly workflow

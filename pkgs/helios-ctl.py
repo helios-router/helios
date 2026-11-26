@@ -98,7 +98,7 @@ DRIVERS = _driver_catalog()
 ROLES = CATALOG["roles"]
 ACCESS_KEYS = list(CATALOG.get("access") or next(iter(ROLES.values()), {}).get("access", {}))
 WAN_VLAN = CFG.get("wanVlan", 10)
-NET_NAME_RE = re.compile(r"^[a-z][a-z0-9]{0,11}$")
+NET_NAME_RE = re.compile(r"^[a-z][a-z0-9]{0,11}\Z")
 NET_RESERVED = {"wan", "lo", "trunk0", "rescue0", "tailscale0", "ifb4wan", "lan0"}
 MAX_NETWORKS = 32
 
@@ -144,8 +144,8 @@ def state_profiles(s):
 
 def profile_names(s):
     return [x["name"] for x in state_profiles(s)]
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
-MAC_RE = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}\Z")
+MAC_RE = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}\Z")
 
 SERVICES = [tuple(x) for x in CFG.get("services", [])]
 
@@ -668,16 +668,16 @@ def cmd_network_set(a):
     if not 2 <= vlan <= 4094 or vlan == WAN_VLAN:
         fail(f"VLAN id must be 2-4094 and not {WAN_VLAN} (the WAN VLAN)")
     prefix = (d.get("prefix") or "").strip()
-    if not re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}$", prefix) or not _valid_prefix(prefix):
+    if not re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\Z", prefix) or not _valid_prefix(prefix):
         fail("subnet must be the first three octets of a private /24, e.g. 10.70.0 (10.60.0, 10.61.0 and 10.62.0 are Heliosphere's)")
     ipv6 = d.get("ipv6") or None
     if ipv6 is not None:
-        if not re.match(r"^0x[0-9a-f]{1,2}$", str(ipv6).lower()):
+        if not re.match(r"^0x[0-9a-f]{1,2}\Z", str(ipv6).lower()):
             fail("IPv6 subnet id must be 0x0-0xff (from a /56)")
         ipv6 = str(ipv6).lower()
     label = (d.get("label") or name).strip()[:24]
     color = d.get("color") or None
-    if color is not None and not re.match(r"^#[0-9a-fA-F]{6}$", color):
+    if color is not None and not re.match(r"^#[0-9a-fA-F]{6}\Z", color):
         fail("color must look like #3366ff")
     access = clean_access(role, d.get("access"))
     with Lock():
@@ -787,8 +787,10 @@ def cmd_block(a):
             fail("adopt the device first (give it a name), then pause it")
         dev["blocked"] = on
         save_state(s)
-        r = nft_set("add" if on else "delete", "cutoff", dev["ip"])
-        live = r.returncode == 0 or (not on and "No such file" in r.stderr)
+        op = "add" if on else "delete"
+        # By IP (IPv4) and by MAC (covers the device's IPv6 addresses too)
+        rs = [nft_set(op, "cutoff", dev["ip"]), nft_set(op, "cutoff_mac", mac)]
+        live = all(r.returncode == 0 or (not on and "No such file" in r.stderr) for r in rs)
         # Commit just this toggle so it never shows up as a pending change
         git_ready()
         if not state_dirty_except_blocked(s):
@@ -815,7 +817,7 @@ def state_dirty_except_blocked(s):
 def cmd_settings_set(a):
     with Lock():
         s = load_state()
-        rate = re.compile(r"^\d+(\.\d+)?(kbit|mbit|gbit)$")
+        rate = re.compile(r"^\d+(\.\d+)?(kbit|mbit|gbit)\Z")
         if a.down is not None:
             if not rate.match(a.down):
                 fail("download rate must look like 500mbit")
@@ -897,9 +899,16 @@ def cmd_apply_run(a):
         git("add", STATE_NAME)  # flakes only see tracked files
         log("nixos-rebuild switch …")
         rebuild = shlex.split(os.environ.get("HELIOS_REBUILD", "nixos-rebuild switch"))
+        profile = os.environ.get("HELIOS_SYSTEM_PROFILE", "/nix/var/nix/profiles/system")
+        before = os.path.realpath(profile)
         with open(APPLY_LOG, "a") as f:
             r = subprocess.run(rebuild, stdout=f, stderr=subprocess.STDOUT, cwd=CONFIG_DIR)
-        if r.returncode != 0:
+        if r.returncode != 0 and os.path.realpath(profile) != before:
+            # switch-to-configuration failed after the new generation was made the
+            # default (e.g. a unit didn't start): it IS running, so it gets the
+            # same confirm-or-roll-back window as a clean apply.
+            log(f"Rebuild finished with errors (exit {r.returncode}), but the new configuration is active.")
+        elif r.returncode != 0:
             log(f"Rebuild failed (exit {r.returncode}). Nothing was changed; fix or discard the pending changes.")
             git("reset", "-q", "--", STATE_NAME, check=False)
             set_apply(state="failed", finished=now(), message="Rebuild failed — see log")
@@ -1110,7 +1119,7 @@ def cmd_maintenance_set(a):
         fail("enabled must be true or false")
     if "days" in w and (not isinstance(w["days"], list) or not w["days"] or any(x not in DAYS for x in w["days"])):
         fail("days: one or more of mon, tue, wed, thu, fri, sat, sun")
-    if "time" in w and (not isinstance(w["time"], str) or not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", w["time"])):
+    if "time" in w and (not isinstance(w["time"], str) or not re.match(r"^([01]\d|2[0-3]):[0-5]\d\Z", w["time"])):
         fail("time must look like 04:00")
     with Lock():
         s = load_state()
@@ -1171,7 +1180,7 @@ def cmd_reboot_check(a):
 # ------------------------------------------------------------- recovery
 RECOVERY = CFG.get("recovery") or {}
 RECOVERY_STATE = os.path.join(DATA_DIR, "recovery.json")
-UNIT_RE = re.compile(r"^[A-Za-z0-9@_.:\\-]{1,200}$")
+UNIT_RE = re.compile(r"^[A-Za-z0-9@_.:\\-]{1,200}\Z")
 
 
 def _unit_label(unit):
@@ -1340,7 +1349,7 @@ def cmd_logwatch_set(a):
             if v not in list(LW_CATALOG.get("presets", {})) + ["custom", "site"]:
                 fail("model must be a preset, custom or site")
         elif k == "customPath":
-            if v is not None and (not isinstance(v, str) or not v.startswith("/") or not v.endswith(".gguf") or ".." in v):
+            if v is not None and (not isinstance(v, str) or ".." in v or not re.fullmatch(r"/[A-Za-z0-9._/-]+\.gguf", v)):
                 fail("customPath must be an absolute path to a .gguf file")
         elif k == "backend":
             if v not in LW_BACKENDS:
@@ -1578,9 +1587,9 @@ if not PRN_CATALOG:
     except (OSError, ValueError, KeyError):
         PRN_CATALOG = {}
 PRINTERS_MANAGED = os.path.join(DATA_DIR, "printers-managed.json")
-PRINTER_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-URI_RE = re.compile(r"^(usb|ipp|ipps|dnssd|socket|lpd|http|https|hp|smb)://\S{1,500}$")
-MODEL_RE = re.compile(r"^\S{1,300}$")
+PRINTER_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}\Z")
+URI_RE = re.compile(r"^(usb|ipp|ipps|dnssd|socket|lpd|http|https|hp|smb)://\S{1,500}\Z")
+MODEL_RE = re.compile(r"^\S{1,300}\Z")
 
 
 def printing_state(s):
@@ -1750,7 +1759,7 @@ def cmd_printer_pause(a):
 
 
 def cmd_print_cancel(a):
-    if not re.match(r"^[A-Za-z0-9_-]{1,64}-\d{1,9}$", a.job):
+    if not re.match(r"^[A-Za-z0-9_-]{1,64}-\d{1,9}\Z", a.job):
         fail("bad job id")
     r = run(["cancel", a.job], timeout=20)
     if r.returncode != 0:
@@ -1784,8 +1793,8 @@ def describe_printing(old, new):
 
 
 # ------------------------------------------------------------ profiles
-PROFILE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
-SERVICE_RE = re.compile(r"^[a-z0-9_]{1,64}$")
+PROFILE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}\Z")
+SERVICE_RE = re.compile(r"^[a-z0-9_]{1,64}\Z")
 
 
 def adguard_status():
@@ -2049,7 +2058,7 @@ QOS_DEFAULTS = {"enabled": False, "down": None, "up": None, "algorithm": "cake",
 QOS_CHOICES = {"algorithm": ("cake", "fq_codel"), "link": ("docsis", "ethernet", "vdsl", "adsl", "custom"),
                "fairness": ("device", "triple", "flow"), "priority": ("diffserv4", "diffserv3", "besteffort"),
                "rtt": ("internet", "regional", "metro")}
-RATE_RE = re.compile(r"^\d+(\.\d+)?(kbit|mbit|gbit)$")
+RATE_RE = re.compile(r"^\d+(\.\d+)?(kbit|mbit|gbit)\Z")
 MODEM_URL = os.environ.get("HELIOS_MODEM_URL", "http://192.168.100.1/")   # cable modems answer here
 
 
@@ -2225,7 +2234,7 @@ def parse_upnp():
 
 
 UPNP_LEASES = "/run/miniupnpd.leases"
-PORT_RANGE_RE = re.compile(r"^(\d{1,5})(?:-(\d{1,5}))?$")
+PORT_RANGE_RE = re.compile(r"^(\d{1,5})(?:-(\d{1,5}))?\Z")
 
 
 def _port_range(text):
@@ -2491,7 +2500,7 @@ def sw_setup(rotate):
     return True
 
 
-SW_USER_RE = re.compile(r"^[a-z][a-z0-9_-]{2,31}$")
+SW_USER_RE = re.compile(r"^[a-z][a-z0-9_-]{2,31}\Z")
 
 
 def cmd_notify_credentials(a):
@@ -2628,11 +2637,11 @@ def cmd_uplink_check(a):
 # ------------------------------------------------- drivers & hardware
 HW_KINDS = ["router", "switch", "ap", "ups"]
 PORT_MODES = ["access", "trunk", "wan", "unused"]
-HW_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
-USB_ID_RE = re.compile(r"^[0-9a-f]{4}:[0-9a-f]{4}$")
-IFNAME_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,15}$")
-SERIAL_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
-NUT_DRIVER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+HW_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}\Z")
+USB_ID_RE = re.compile(r"^[0-9a-f]{4}:[0-9a-f]{4}\Z")
+IFNAME_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,15}\Z")
+SERIAL_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}\Z")
+NUT_DRIVER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}\Z")
 MAX_HARDWARE, MAX_PORTS, MAX_SSIDS = 32, 64, 16
 UPS_URGENT = {"ONBATT", "LOWBATT", "FSD", "SHUTDOWN", "COMMBAD", "NOCOMM", "REPLBATT", "NOPARENT"}
 UPS_PHRASE = {"ONLINE": "back on mains power", "ONBATT": "on battery", "LOWBATT": "battery low", "FSD": "forced shutdown",
@@ -3035,6 +3044,8 @@ def cmd_hardware_set(a):
     if driver not in drivers or kind not in drivers[driver].get("kinds", []):
         fail(f"driver {driver!r} can't handle a {kind}")
     label = _text(d, "label", 40, hid) or hid
+    if re.search(r'[\x00-\x1f\x7f"\\]', label):
+        fail("label can't contain quotes, backslashes or control characters")
     notes = _text(d, "notes", 200)
     with Lock():
         s = load_state()
@@ -3315,7 +3326,7 @@ def cmd_vulnix_report(a):
         name = e.get("pname") or e.get("name") or "?"
         version = e.get("version")
         if not version and isinstance(e.get("name"), str):
-            m = re.match(r"^(.*?)-(\d.*)$", e["name"])
+            m = re.match(r"^(.*?)-(\d.*)\Z", e["name"])
             if m:
                 name, version = m.group(1), m.group(2)
         worst = max(cves, key=lambda c: _score(scores.get(c)))
@@ -3389,12 +3400,20 @@ def hs_resolve(s):
 
 def hs_write(path, data, mode=0o600, dirmode=0o755):
     os.makedirs(os.path.dirname(path), mode=dirmode, exist_ok=True)
-    tmp = path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-    with os.fdopen(fd, "w") as f:
-        f.write(data)
-    os.chmod(tmp, mode)
-    os.replace(tmp, path)
+    # Some of these dirs are writable from inside the container: never follow
+    # or reuse a file planted there, always a fresh one of our own
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".helios-")
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def tool(cmd, input=None):
@@ -3405,14 +3424,21 @@ def tool(cmd, input=None):
     return r.stdout
 
 
+def _wg_key(k):
+    try:
+        return len(base64.b64decode(k, validate=True)) == 32 and len(k) == 44
+    except (ValueError, TypeError):
+        return False
+
+
 def hs_server_public_key():
     pub = read_plain(hs_path("wireguard", "public")).strip()
-    if pub:
+    if _wg_key(pub):
         return pub
     priv = read_plain(hs_path("wireguard", "private")).strip()
     if priv:
         r = run(["wg", "pubkey"], input=priv + "\n")
-        if r.returncode == 0 and r.stdout.strip():
+        if r.returncode == 0 and _wg_key(r.stdout.strip()):
             return r.stdout.strip()
     return None
 
@@ -3489,7 +3515,7 @@ def cmd_remote_set(a):
                             fail(f"unknown network {x!r}")
                     cur[key] = list(dict.fromkeys(nets))
             if "hostname" in v:
-                if not isinstance(v["hostname"], str) or not re.match(r"^[a-z0-9][a-z0-9-]{0,62}$", v["hostname"]):
+                if not isinstance(v["hostname"], str) or not re.match(r"^[a-z0-9][a-z0-9-]{0,62}\Z", v["hostname"]):
                     fail("tailscale.hostname: lowercase letters, digits and dashes (max 63)")
                 cur["hostname"] = v["hostname"]
             if "tunnel" in v:
@@ -3537,10 +3563,12 @@ def cmd_remote_set(a):
             host = p_.get("host")
             if p_.get("type") not in ("socks5", "http"):
                 fail("egress.proxy.type must be socks5 or http")
-            if not isinstance(host, str) or not re.match(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$", host):
+            if not isinstance(host, str) or not re.match(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?\Z", host):
                 try:
-                    ipaddress.ip_address(host)
+                    ip_ = ipaddress.ip_address(host)
                 except ValueError:
+                    ip_ = None
+                if ip_ is None or "%" in host or str(ip_) != host:
                     fail("egress.proxy.host must be a host name or IP address")
             hs["egress"]["proxy"] = {"type": p_["type"], "host": host, "port": _port(p_.get("port"), "egress.proxy.port")}
         if "mode" in eg:
@@ -3619,7 +3647,7 @@ def hs_status(hs):
     if mode != "direct":
         t = hs_exec("curl", "-s", "--max-time", "4", "https://api.ipify.org", timeout=8)
         t = (t or "").strip()
-        ip = t if re.match(r"^[0-9a-fA-F.:]{3,45}$", t) else None
+        ip = t if re.match(r"^[0-9a-fA-F.:]{3,45}\Z", t) else None
     st["egress"] = {"mode": mode, "configured": configured, "up": None if mode == "direct" else bool(ip), "publicIp": ip}
     return st
 
@@ -3938,13 +3966,18 @@ OVPN_PATHS = {"ca", "cert", "key", "dh", "pkcs12", "tls-auth", "tls-crypt", "tls
 def clean_wg_conf(text):
     section, keep, dropped, seen = None, [], [], {}
     for line in text.splitlines():
-        st = line.strip()
-        m = re.match(r"^\[(\w+)\]$", st)
+        # wg-quick strips "#…" before it looks at a line, so judge what it will see
+        st = line.split("#", 1)[0].strip()
+        m = re.match(r"^\[(\w+)\]\Z", st)
         if m:
             section = m.group(1).lower()
             keep.append(line)
             continue
+        if st.startswith("["):
+            fail(f"unexpected line in the WireGuard config: {st[:60]!r}")
         k = st.split("=", 1)[0].strip().lower() if "=" in st else ""
+        if k and not section:
+            fail("the WireGuard config has settings before its [Interface] section")
         if section and k:
             if k in WG_DROP:
                 dropped.append(k)
@@ -3966,7 +3999,7 @@ def clean_ovpn_conf(text):
             if st == f"</{block}>":
                 block = None
             continue
-        m = re.match(r"^<(\w[\w-]*)>$", st)
+        m = re.match(r"^<(\w[\w-]*)>\Z", st)
         if m:
             block = m.group(1)
             keep.append(line)
@@ -3975,10 +4008,14 @@ def clean_ovpn_conf(text):
             keep.append(line)
             continue
         parts = st.split()
-        k = parts[0].lower()
+        # OpenVPN un-quotes/un-escapes tokens and accepts "--up" as "up" in config files
+        k = re.sub(r"[\\\"']", "", parts[0]).lower()
+        k = k[2:] if k.startswith("--") else k
         if k in OVPN_DROP:
             dropped.append(k)
             continue
+        if k in ("http-proxy", "socks-proxy") and len(parts) > 3:
+            fail(f"“{k}” with a credentials file isn't supported; remove the file argument")
         if k in OVPN_PATHS:
             fail(f"“{k}” refers to a file on disk; paste its contents inline (<{k}>…</{k}>) or remove it")
         if k == "auth-user-pass" and len(parts) > 1:
