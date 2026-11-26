@@ -10,9 +10,11 @@ const OUT = process.argv[2] || "/home/claude/shots";
 fs.mkdirSync(OUT, { recursive: true });
 const types = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
 const srv = http.createServer((req, res) => {
-  const p = path.join(ROOT, decodeURIComponent(req.url.split("?")[0].split("#")[0]));
+  let p;
+  try { p = path.resolve(ROOT, "." + decodeURIComponent(req.url.split("?")[0].split("#")[0])); } catch { p = null; }
+  if (!p || (p !== path.resolve(ROOT) && !p.startsWith(path.resolve(ROOT) + path.sep))) { res.writeHead(403); res.end(); return; }
   fs.readFile(p, (e, b) => { if (e) { res.writeHead(404); res.end(); return; } res.writeHead(200, { "Content-Type": types[path.extname(p)] || "text/plain" }); res.end(b); });
-}).listen(0);
+}).listen(0, "127.0.0.1");
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 

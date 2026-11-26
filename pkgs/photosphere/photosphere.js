@@ -2284,8 +2284,8 @@ window.addEventListener("hashchange", syncTabMenu);
 applyAdvanced();
 loadServices().catch(() => {});
 
-const VIEWS = { overview: viewOverview, devices: viewDevices, networks: viewNetworks, filtering: viewFiltering, printing: viewPrinting, hardware: viewHardware, remote: viewRemote, traffic: viewTraffic, qos: viewQos, upnp: viewUpnp, notifications: viewSolarWind, history: viewHistory, advanced: viewAdvanced };
-function currentTab() { const t = (location.hash || "#overview").slice(1).split("/")[0]; return VIEWS[t] ? t : "overview"; }
+const VIEWS = new Map(Object.entries({ overview: viewOverview, devices: viewDevices, networks: viewNetworks, filtering: viewFiltering, printing: viewPrinting, hardware: viewHardware, remote: viewRemote, traffic: viewTraffic, qos: viewQos, upnp: viewUpnp, notifications: viewSolarWind, history: viewHistory, advanced: viewAdvanced }));
+function currentTab() { const t = (location.hash || "#overview").slice(1).split("/")[0]; return VIEWS.has(t) ? t : "overview"; }
 function rerender() {
   cleanupView();
   const tab = currentTab();
@@ -2297,7 +2297,7 @@ function rerender() {
       h("button", { class: "btn btn-primary", onclick: () => { setAdvanced(true); rerender(); } }, "Show advanced settings")));
     return;
   }
-  VIEWS[tab](root);
+  VIEWS.get(tab)(root);
 }
 window.addEventListener("hashchange", rerender);
 let resizeT = null;
