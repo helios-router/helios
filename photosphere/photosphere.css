@@ -359,7 +359,7 @@ textarea { resize: vertical; }
   .app-head { flex-wrap: wrap; align-items: center; gap: 10px; }
   .head-right { flex: 1 1 100%; align-items: center; margin-bottom: 10px; }
   .head-right .tabs { display: none; }
-  .tab-menu, .tab-menu[hidden] { display: block; flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 9px 12px; border-radius: 6px;
+  .tab-menu { display: block; flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 9px 12px; border-radius: 6px;
     border: 1px solid var(--line); background: var(--card); color: var(--text); }
   .head-tools { border-left: 0; padding: 0; margin: 0; }
   .brand { padding-bottom: 0; }
@@ -373,7 +373,6 @@ textarea { resize: vertical; }
 .tab-col { display: flex; flex-direction: column; align-items: center; }
 .tab-top { display: flex; gap: 4px; }
 .tab-sub { display: flex; gap: 4px; margin-top: 2px; }
-.tab-sub:not(:has(a:not([hidden]))) { display: none; }
 .tab-sub a { font-size: 13px; padding: 6px 14px 7px; white-space: nowrap; }
 .tabs .tab-col + .tab-col { margin-left: 2px; }
 th.pause-col, td.pause-col { width: 1%; padding-right: 0; }

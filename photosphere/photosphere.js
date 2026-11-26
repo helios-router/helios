@@ -2267,6 +2267,8 @@ function syncTabMenu() {
 function applyAdvanced() {
   const on = advancedOn();
   for (const a of document.querySelectorAll("#tabs a[data-adv]")) a.hidden = !on || (a.dataset.svc && serviceOff(a.dataset.svc));
+  // Hide empty second-row groups (plain JS rather than CSS :has(), for older Firefox)
+  for (const sub of document.querySelectorAll("#tabs .tab-sub")) sub.hidden = ![...sub.querySelectorAll("a")].some(a => !a.hidden);
   syncTabMenu();
   const b = $("#adv-btn");
   b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
