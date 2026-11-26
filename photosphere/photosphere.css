@@ -376,3 +376,12 @@ textarea { resize: vertical; }
 .tab-sub a { font-size: 13px; padding: 6px 14px 7px; white-space: nowrap; }
 .tabs .tab-col + .tab-col { margin-left: 2px; }
 th.pause-col, td.pause-col { width: 1%; padding-right: 0; }
+/* Device pause toggle: the icon shows the state, not the action */
+.btn-icon.state-running, .btn-icon.state-paused { border-color: currentColor; }
+.btn-icon.state-running { color: var(--ok); background: transparent; }
+.btn-icon.state-paused { color: var(--bad); background: var(--bad-soft); }
+.btn-icon.state-running:hover { background: var(--ok-soft); }
+.btn-icon.state-paused:hover { box-shadow: inset 0 0 0 1px currentColor; }
+.btn-icon.state-running::before, .btn-icon.state-paused::before { content: ""; display: inline-block; flex: none; }
+.btn-icon.state-running::before { border-left: 9px solid currentColor; border-top: 5.5px solid transparent; border-bottom: 5.5px solid transparent; margin-left: 2px; }
+.btn-icon.state-paused::before { width: 3px; height: 10px; border-left: 3px solid currentColor; border-right: 3px solid currentColor; }

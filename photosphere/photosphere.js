@@ -594,9 +594,11 @@ function viewDevices(root) {
       const mismatch = d.known && d.lease_vlan && d.lease_vlan !== d.vlan;
       return h("tr", {},
         // Pause/resume: its own narrow column right before the name
-        h("td", { class: "pause-col" }, d.known && netInfo(d.vlan).access.internet ? h("button", { class: "btn btn-icon " + (d.blocked ? "btn-resume" : "btn-pause"),
-          title: d.blocked ? `Resume ${d.name}: give it its internet back` : `Pause ${d.name}: cut it off right now (no apply needed)`,
-          "aria-label": d.blocked ? `Resume ${d.name}` : `Pause ${d.name}`, onclick: ev => { ev.stopPropagation(); togglePause(d); } }) : null),
+        // Shows the current state (green ▶ running, red ❚❚ paused); a click switches it
+        h("td", { class: "pause-col" }, d.known && netInfo(d.vlan).access.internet ? h("button", { class: "btn btn-icon " + (d.blocked ? "state-paused" : "state-running"),
+          title: d.blocked ? `${d.name} is paused: click to give it its internet back` : `${d.name} has internet: click to pause it right now (no apply needed)`,
+          "aria-label": d.blocked ? `${d.name} paused. Resume` : `${d.name} running. Pause`, "aria-pressed": d.blocked ? "true" : "false",
+          onclick: ev => { ev.stopPropagation(); togglePause(d); } }) : null),
         h("td", {}, h("div", { style: "display:flex;gap:10px;align-items:center" },
           h("span", { class: "dot " + (d.blocked ? "bad" : d.online ? "ok" : "idle"), title: d.blocked ? "Paused" : d.online ? "Online" : "Offline" }),
           h("div", { class: "name-cell" },
