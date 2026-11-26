@@ -14,12 +14,26 @@ Keep that repository private. It will hold your MAC addresses, names and keys.
 
 ## Route 1: the installer ISO
 
-Get the ISO:
+There are two images:
 
-* build it: `nix build .#installer-iso` in a checkout of the repository; or
-* download the `helios-installer-iso` artifact from a CI run on `main` (kept 14 days). Pull request runs do not build it.
+| Image | Build | Internet during install |
+|---|---|---|
+| **Offline** (default), a few GB | `nix build --impure .#installer-iso` | not needed |
+| **Netinstall**, about 1 GB | `nix build .#installer-iso-netinstall` | required |
 
-Write it to a USB stick, boot the router from it, plug a cable with DHCP and internet into any port, and run:
+The offline image carries complete HeliOS systems for the installer's choices, the
+tools to adapt them to your answers, and the exact HeliOS and nixpkgs sources it was
+built from. A router usually has no internet until it's installed, so this is the one
+to use. With internet available it still installs from the image, and downloads only
+what isn't on it. Log AI is the one choice that needs a download, so without internet
+the installer doesn't offer it; turn it on later in Photosphere.
+
+Both images can be built in a checkout of the repository, or downloaded from a CI run on
+`main` (artifacts `helios-installer-iso` and `helios-installer-iso-netinstall`, kept 14
+days). Pull request runs don't build them.
+
+Write the image to a USB stick, boot the router from it (with the netinstall image, also
+plug in a cable with DHCP and internet), and run:
 
 ```
 sudo helios-install
@@ -48,7 +62,7 @@ It then prints a summary. Nothing is written until you type the disk's name to c
 4. runs `nixos-install` from that flake (no root password is set);
 5. asks you to set the admin user's password, used for `sudo` and for logging in to Cockpit.
 
-Then remove the stick and reboot. The installed router follows `github:helios-router/helios` for updates. The boot loader is systemd-boot.
+Then remove the stick and reboot. The installed router follows `github:helios-router/helios` for updates. With the offline image, its `flake.lock` starts pinned to the exact HeliOS and nixpkgs versions on the image, and those sources are copied onto the router, so it can rebuild before it ever goes online; `nix flake update` moves it to the latest. The boot loader is systemd-boot.
 
 ## Route 2: an existing NixOS machine
 

@@ -173,6 +173,10 @@ in
   };
 
   config = {
+    # A headless router doesn't need the NixOS HTML manual (man pages stay). It's
+    # also the heaviest thing to rebuild when the NixOS version string changes.
+    documentation.nixos.enable = lib.mkDefault false;
+
     assertions = [
       { assertion = cfg.tailscale.loginServer == null || cfg.solarWind.exposure != "funnel";
         message = "helios.solarWind.exposure = \"funnel\" needs Tailscale's own servers; with tailscale.loginServer (Headscale) use \"local\" or \"proxy\""; }

@@ -2422,16 +2422,52 @@ def cmd_history(a):
          "backup": backup, "outages": read_outages()[-100:][::-1]})
 
 
+# AdGuard keys whose values never go into the backup (the repo may be pushed to a
+# remote): the admin password hash, an inline TLS private key, and credentials
+# embedded in URLs. The copy is for restoring by hand: keep the live file's values
+# for these lines when you do.
+ADGUARD_SECRET_KEYS = ("password", "private_key")
+_URL_CREDS = re.compile(r"(\w+://)[^/\s:@'\"]+:[^/\s@'\"]+@")
+
+
+def redact_adguard(text):
+    """Line-based redaction of AdGuardHome.yaml (no YAML library in the closure)."""
+    out, skip_indent = [], None
+    key_re = re.compile(r"^(\s*(?:-\s+)?)(%s):(.*)$" % "|".join(ADGUARD_SECRET_KEYS))
+    for line in text.splitlines():
+        indent = len(line) - len(line.lstrip())
+        if skip_indent is not None:
+            if line.strip() and indent <= skip_indent:
+                skip_indent = None          # block scalar ended
+            else:
+                continue
+        m = key_re.match(line)
+        if m:
+            value = m.group(3).strip()
+            if value in ("", '""', "''"):
+                out.append(line)            # empty: nothing to hide
+                continue
+            out.append(f"{m.group(1)}{m.group(2)}: REDACTED")
+            if value[:1] in ("|", ">"):     # multi-line block scalar follows
+                skip_indent = indent
+            continue
+        out.append(_URL_CREDS.sub(r"\1REDACTED@", line))
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
+
 def cmd_backup(a):
     """Snapshot settings that live outside Nix (AdGuard UI changes) into the git repo."""
     git_ready()
     dest = os.path.join(CONFIG_DIR, "backups", "adguard")
     os.makedirs(dest, exist_ok=True)
     copied = []
-    for src in ("/var/lib/AdGuardHome/AdGuardHome.yaml",):
-        if os.path.exists(p(src)):
-            shutil.copy2(p(src), os.path.join(dest, os.path.basename(src)))
-            copied.append(src)
+    src = "/var/lib/AdGuardHome/AdGuardHome.yaml"
+    if os.path.exists(p(src)):
+        with open(p(src)) as fh:
+            text = redact_adguard(fh.read())
+        with open(os.path.join(dest, os.path.basename(src)), "w") as fh:
+            fh.write(text)
+        copied.append(src)
     git("add", "-A", "--", "backups")
     changed = bool(git("diff", "--cached", "--quiet", "--", "backups", check=False).returncode)
     if changed:

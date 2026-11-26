@@ -1,30 +1,25 @@
-# HeliOS installer ISO: the NixOS minimal installer plus `helios-install`,
-# a text installer that partitions a disk, writes /etc/nixos from the HeliOS
-# templates and runs nixos-install. Build: nix build .#installer-iso
-{ config, lib, pkgs, modulesPath, heliosSrc, ... }:
+# HeliOS installer ISO: the NixOS minimal installer plus `helios-install`.
+#   nix build --impure .#installer-iso    offline image (default): installs with no network
+#                                         (--impure: its contents are worked out from the build graph)
+#   nix build .#installer-iso-netinstall  small image: downloads everything during the install
+{ heliosSrc, nixpkgsSrc, offlinePaths ? [ ] }:
+{ config, lib, modulesPath, ... }:
 
-let
-  install = pkgs.writeShellApplication {
-    name = "helios-install";
-    runtimeInputs = with pkgs; [ gptfdisk dosfstools e2fsprogs btrfs-progs util-linux iproute2 gnused coreutils git nixos-install-tools ];
-    runtimeEnv = {
-      HELIOS_TEMPLATES = "${heliosSrc}/templates";
-      # Where the installed router fetches HeliOS from (and updates from)
-      HELIOS_URL = "github:helios-router/helios";
-    };
-    text = builtins.readFile ./helios-install.sh;
-  };
-in
+let offline = offlinePaths != [ ]; in
 {
-  imports = [ "${modulesPath}/installer/cd-dvd/installation-cd-minimal.nix" ];
+  imports = [
+    "${modulesPath}/installer/cd-dvd/installation-cd-minimal.nix"
+    (import ./tool.nix { inherit heliosSrc nixpkgsSrc offlinePaths; })
+  ];
 
-  image.baseName = lib.mkForce "helios-installer-${config.system.nixos.release}-${pkgs.stdenv.hostPlatform.system}";
+  image.baseName = lib.mkForce "helios-installer-${lib.optionalString (!offline) "netinstall-"}${config.system.nixos.release}-x86_64-linux";
   isoImage.volumeID = lib.mkForce "HELIOS_INSTALL";
-  nix.settings.experimental-features = [ "nix-command" "flakes" ];
-  environment.systemPackages = [ install ];
+  isoImage.storeContents = offlinePaths;
   # Shown on the console after auto-login
-  services.getty.helpLine = lib.mkForce ''
+  services.getty.helpLine = lib.mkForce (''
 
-    HeliOS installer. Connect a cable with internet, then run:  sudo helios-install
-  '';
+    HeliOS installer. Run:  sudo helios-install
+  '' + (if offline
+    then "  No internet needed: everything for a standard install is on this image.\n"
+    else "  This is the netinstall image: connect a cable with internet first.\n"));
 }

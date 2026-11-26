@@ -38,7 +38,7 @@ PRs opened with the default `GITHUB_TOKEN` do not trigger CI. The workflow there
 | `nix flake check` | Builds the example system (the site template with placeholders) and the installer system. |
 | `helios-ctl tests and lint` | Python 3.13: runs `tests/test_helios_ctl.py`, then ShellCheck on `installer/helios-install.sh`, `tests/*.sh` and `pkgs/*.sh`. |
 | `Photosphere in Firefox, WebKit, Chromium` | Starts the demo (`tests/demo.sh`) and runs `tests/browsers.cjs` with Playwright on phone and desktop sizes; uploads screenshots if it fails. |
-| `installer ISO` | Not on pull requests; after `nix flake check`, builds the ISO and uploads it as the `helios-installer-iso` artifact for 14 days. |
+| `installer ISO` | Not on pull requests; after `nix flake check`, builds both ISOs (offline and netinstall) and uploads them as the `helios-installer-iso` and `helios-installer-iso-netinstall` artifact for 14 days. |
 
 Other scans:
 
