@@ -34,8 +34,14 @@ let cfg = config.helios; in
   # TOTP for Cockpit only: SSH is key-only, and Cockpit's "administrative access"
   # (sudo) and the console keep the password alone, so a lost phone never locks
   # you out of the box itself. allowNullOTP: no secret file = no code asked.
+  # The rescue port's password SSH (above) skips the code too: it needs someone
+  # at the router, who could also use the console.
   security.pam.services.cockpit = {
     googleAuthenticator = { enable = true; allowNullOTP = true; };
+    # Check the password first and stop there if it's wrong (NixOS makes this
+    # step "optional"). Then wrong passwords from anyone on an admin network
+    # don't use up the code's rate limit (3 tries / 30 s) and lock you out.
+    rules.auth.unix-early.control = lib.mkForce "requisite";
     rules.auth.google_authenticator.settings = {
       secret = "/var/lib/helios/totp/\${USER}";
       user = "root";

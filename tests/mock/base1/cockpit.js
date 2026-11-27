@@ -723,17 +723,23 @@
         { kind: "flare", time: t - 86400 * 2, title: "helios: critical log events", message: "r8152 2-1:1.0 trunk0: USB disconnect, device number 3", priority: 5 },
       ] };
       case "backup": return { ok: true, changed: false, time: t, pushed: true };
-      case "account": return { ok: true, user: "admin", sshKeys: 1, passwordChanged: now0 - 86400 * 40, totp: account.totp, totpPending: !!account.pending };
-      case "account-password": { const pw = (stdin || "").replace(/[\r\n]+$/, "");
+      case "account": return { ok: true, user: "admin", sshKeys: 1, passwordChanged: now0 - 86400 * 40, mutableUsers: true, totp: account.totp, totpEnforced: true, totpPending: !!account.pending };
+      case "account-password": { let d = {}; try { d = JSON.parse(stdin || "{}"); } catch (e) { return { ok: false, error: "Expected JSON on stdin" }; }
+        const pw = d.new || "";
         if (pw.length < 12 || pw.length > 128) return { ok: false, error: "Password must be 12 to 128 characters" };
+        if (!d.current) return { ok: false, error: "The current password is wrong" };
         return { ok: true, user: "admin" }; }
-      case "account-2fa-begin": account.pending = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+      case "account-2fa-begin":
+        if (account.totp && !/^(\d{6}|\d{8})$/.test((stdin || "").trim())) return { ok: false, error: "That code doesn't match. Enter the current code from the app, or a recovery code" };
+        account.pending = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
         return { ok: true, user: "admin", secret: account.pending, uri: `otpauth://totp/HeliOS%20%28helios%29:admin?secret=${account.pending}`,
           qrSvg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21 21"><path d="M0 0h7v7H0zM14 0h7v7h-7zM0 14h7v7H0zM9 9h3v3H9z"/></svg>' };
       case "account-2fa-enable": if (!account.pending) return { ok: false, error: "The setup expired: start again" };
         if (!/^\d{6}$/.test((stdin || "").trim())) return { ok: false, error: "Enter the 6-digit code from the app" };
         account = { totp: true, pending: null }; return { ok: true, user: "admin", recoveryCodes: ["40912377", "18350264", "77201946", "50388412", "93016655"] };
-      case "account-2fa-disable": account = { totp: false, pending: null }; return { ok: true, user: "admin" };
+      case "account-2fa-disable":
+        if (account.totp && !/^(\d{6}|\d{8})$/.test((stdin || "").trim())) return { ok: false, error: "That code doesn't match. Enter the current code from the app, or a recovery code" };
+        account = { totp: false, pending: null }; return { ok: true, user: "admin" };
       default: return { ok: false, error: `mock: unknown command ${cmd}` };
     }
   }

@@ -2202,34 +2202,57 @@ function viewPrinting(root) {
 // for Cockpit with an authenticator app (TOTP). Takes effect at once: no apply.
 function accountCard(r, reload) {
   const err = hwErr();
-  const on = r.totp;
-  return card("Admin account", on ? statusEl("ok", "Two-factor on") : statusEl("warn", "Password only"),
+  const on = r.totp, enforced = r.totpEnforced !== false;
+  return card("Admin account", on && enforced ? statusEl("ok", "Two-factor on") : on ? statusEl("bad", "Two-factor not enforced") : statusEl("warn", "Password only"),
     h("dl", { class: "kv" },
       h("dt", {}, "Login"), h("dd", { class: "mono" }, r.user),
       h("dt", {}, "Password set"), h("dd", {}, r.passwordChanged ? new Date(r.passwordChanged * 1000).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" }) : "—"),
-      h("dt", {}, "Two-factor sign-in"), h("dd", {}, on ? "On: Cockpit asks for a code from your app" : "Off"),
+      h("dt", {}, "Two-factor sign-in"), h("dd", {}, !on ? "Off" : enforced ? "On: Cockpit asks for a code from your app" : "Set up, but not asked for"),
       h("dt", {}, "SSH keys"), h("dd", {}, `${r.sshKeys || 0} (set in site.nix)`)),
     h("p", { class: "muted small" }, "Two-factor sign-in covers Cockpit (and so these pages). SSH only takes keys, and the console and Cockpit's administrative access keep the password alone, so a lost phone can't lock you out of the router itself."),
+    on && !enforced ? h("div", { class: "alert alert-bad small" }, h("strong", {}, "Cockpit isn't asking for the code. "),
+      "This system version doesn't have two-factor sign-in (a rollback to an older generation?). Update or roll forward to turn it back on.") : null,
+    r.mutableUsers === false ? h("div", { class: "alert alert-info small" }, "Passwords on this router are set in its Nix configuration (users.mutableUsers = false), so change them there.") : null,
     err,
     h("div", { class: "card-actions" },
-      h("button", { class: "btn btn-secondary btn-sm", onclick: () => passwordDialog(r.user, reload) }, "Change password"),
+      r.mutableUsers === false ? null : h("button", { class: "btn btn-secondary btn-sm", onclick: () => passwordDialog(r.user, reload) }, "Change password"),
       on
-        ? [h("button", { class: "btn btn-secondary btn-sm", onclick: () => totpSetup(r.user, reload, true) }, "Move to a new phone"),
-           h("button", { class: "btn btn-danger btn-sm", onclick: async () => {
-             if (!await confirmDialog("Turn off two-factor sign-in?", "Cockpit will ask for the password only. The app's codes and the recovery codes stop working.", "Turn off", true)) return;
-             err.hidden = true;
-             api("account-2fa-disable").then(() => { toast("Two-factor sign-in is off"); reload(); }).catch(e => hwShowErr(err, e));
-           } }, "Turn off")]
-        : h("button", { class: "btn btn-primary btn-sm", onclick: () => totpSetup(r.user, reload, false) }, "Turn on two-factor sign-in")));
+        ? [h("button", { class: "btn btn-secondary btn-sm", onclick: () => currentCodeDialog({ title: "Move to a new phone",
+              intro: "First, a current code from the app on your old phone (or a recovery code).", okLabel: "Next",
+              submit: code => totpSetup(r.user, reload, code) }) }, "Move to a new phone"),
+           h("button", { class: "btn btn-danger btn-sm", onclick: () => currentCodeDialog({ title: "Turn off two-factor sign-in?",
+              intro: "Cockpit will ask for the password only. The app's codes and the recovery codes stop working. Enter a current code from the app (or a recovery code) to confirm.",
+              okLabel: "Turn off", danger: true,
+              submit: code => apiInput(code, "account-2fa-disable").then(() => { toast("Two-factor sign-in is off"); reload(); }) }) }, "Turn off")]
+        : h("button", { class: "btn btn-primary btn-sm", onclick: () => totpSetup(r.user, reload, null) }, "Turn on two-factor sign-in")));
+}
+
+// Asks for a current app code (or recovery code); submit(code) returns a promise,
+// and its error is shown in the dialog
+function currentCodeDialog({ title, intro, okLabel, danger = false, submit }) {
+  const code = h("input", { type: "text", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 9, class: "mono", placeholder: "123456" });
+  const err = hwErr();
+  const m = modal({ title, body: [h("p", {}, intro), err, h("label", { class: "field" }, h("span", {}, "Code"), code)],
+    foot: close => [
+      h("button", { class: "btn " + (danger ? "btn-danger" : "btn-primary"), onclick: ev => {
+        err.hidden = true; ev.target.disabled = true;
+        Promise.resolve().then(() => submit(code.value.trim())).then(close).catch(e => hwShowErr(err, e))
+          .finally(() => { ev.target.disabled = false; });
+      } }, okLabel),
+      h("button", { class: "btn btn-link", onclick: close }, "Cancel")] });
+  code.addEventListener("keydown", ev => { if (ev.key === "Enter") m.root.querySelector(".modal-foot .btn").click(); });
+  code.focus();
 }
 
 function passwordDialog(user, reload) {
+  const cur = h("input", { type: "password", autocomplete: "current-password" });
   const pw = h("input", { type: "password", autocomplete: "new-password" });
   const pw2 = h("input", { type: "password", autocomplete: "new-password" });
   const err = hwErr();
   modal({ title: `New password for ${user}`, body: [
     h("p", {}, "Used to sign in to Cockpit, for sudo and on the console. It changes right away; this session stays signed in."),
     err,
+    h("label", { class: "field" }, h("span", {}, "Current password"), cur),
     h("label", { class: "field" }, h("span", {}, "New password"), pw, h("span", { class: "help" }, "12–128 characters. A passphrase of a few words works well.")),
     h("label", { class: "field" }, h("span", {}, "Confirm"), pw2)],
   foot: close => [
@@ -2237,7 +2260,7 @@ function passwordDialog(user, reload) {
       err.hidden = true;
       if (pw.value !== pw2.value) return hwShowErr(err, new Error("The two passwords don't match"));
       ev.target.disabled = true;
-      apiInput(pw.value + "\n", "account-password")
+      apiInput(JSON.stringify({ current: cur.value, new: pw.value }), "account-password")
         .then(() => { close(); toast("Password changed"); reload(); })
         .catch(e => hwShowErr(err, e))
         .finally(() => { ev.target.disabled = false; });
@@ -2245,8 +2268,11 @@ function passwordDialog(user, reload) {
     h("button", { class: "btn btn-link", onclick: close }, "Cancel")] });
 }
 
-function totpSetup(user, reload, replacing) {
-  api("account-2fa-begin").then(b => {
+// currentCode: null when turning it on, a current code when moving to a new phone.
+// Returns the begin call's promise, so a wrong current code shows in the caller's dialog.
+function totpSetup(user, reload, currentCode) {
+  const replacing = currentCode != null;
+  return apiInput(replacing ? currentCode : "", "account-2fa-begin").then(b => {
     const qr = b.qrSvg ? safeSvg(b.qrSvg) : null;
     const code = h("input", { type: "text", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 7, class: "mono", placeholder: "123456" });
     const err = hwErr();
@@ -2272,7 +2298,7 @@ function totpSetup(user, reload, replacing) {
       h("button", { class: "btn btn-link", onclick: close }, "Cancel")] });
     code.addEventListener("keydown", ev => { if (ev.key === "Enter") m.root.querySelector(".btn-primary").click(); });
     code.focus();
-  }).catch(e => toast(e.message, true));
+  }, e => { if (replacing) throw e; toast(e.message, true); });
 }
 
 function recoveryDialog(codes) {

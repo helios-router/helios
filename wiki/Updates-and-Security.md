@@ -105,7 +105,7 @@ Report it privately through GitHub: on the repository, open Security, then Repor
 ## Hardening built into a router
 
 * SSH: keys only, no root login, 3 attempts, never exposed on the WAN; password login exists only on the rescue port address.
-* Cockpit sign-in can require a one-time code from an authenticator app (Photosphere → Advanced → Admin account), with one-use recovery codes. SSH, `sudo` and the console are not affected, so a lost phone cannot lock you out.
+* Cockpit sign-in can require a one-time code from an authenticator app (Photosphere → Advanced → Admin account), with one-use recovery codes. The password is checked first, so wrong passwords don't use up the code's rate limit (3 tries per 30 seconds). Turning it off, moving it to a new phone or changing the password needs the current code or password, not just a signed-in session. SSH, `sudo` and the console are not affected, so a lost phone cannot lock you out; the rescue port's password SSH skips the code too (it needs physical access).
 * The router's admin ports (SSH, Cockpit, AdGuard) are reachable only from admin networks, Tailscale and the rescue port. Probes from other networks are dropped and notified.
 * Notifications are deny-all; the router publishes with a write-only token, phones log in with a read-only account. Both are generated on first boot and never enter the Nix store.
 * Kernel hardening sysctls (rp_filter, no redirects, no source routing, SYN cookies, restricted dmesg and kernel pointers).

@@ -50,7 +50,7 @@ CI (`.github/workflows/`) runs all of these on every pull request:
 | `helios-ctl` tests | `python tests/test_helios_ctl.py` |
 | Shell lint | `shellcheck -s bash installer/helios-install.sh tests/*.sh pkgs/*.sh` |
 | Nix evaluation | `nix flake check` |
-| VM tests: router (DHCP, NAT, isolation), hardening (blocked devices, Log AI, remote access accounts) | `nix build .#vmTests.router .#vmTests.hardening` (needs KVM) |
+| VM tests: router (DHCP, NAT, isolation), hardening (blocked devices, Log AI, remote access accounts, Cockpit two-factor sign-in) | `nix build .#vmTests.router .#vmTests.hardening` (needs KVM) |
 | VM test: offline install | `nix build --impure .#vmTests.offline-install` (needs KVM) |
 | Photosphere in Firefox, WebKit, Chromium | `tests/demo.sh 8765`, then `node tests/browsers.cjs …` (see `ci.yml`) |
 | CodeQL, zizmor, actionlint, dependency review, PR guard | on GitHub only |

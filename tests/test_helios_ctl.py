@@ -1568,23 +1568,65 @@ class HeliosCtl(unittest.TestCase):
         off = mac[-1] & 0x0F
         return "%06d" % ((struct.unpack(">I", mac[off:off + 4])[0] & 0x7FFFFFFF) % 1000000)
 
-    def test_account_status(self):
+    def set_shadow(self, password, changed=20000):
+        """A real sha512-crypt hash for admin in the fake /etc/shadow."""
+        import ctypes
+        import ctypes.util
+        lib = ctypes.CDLL(ctypes.util.find_library("crypt"))
+        lib.crypt.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+        lib.crypt.restype = ctypes.c_char_p
+        h = lib.crypt(password.encode(), b"$6$helios-test$").decode()
         os.makedirs(os.path.join(self.fake, "etc"), exist_ok=True)
-        write_file(os.path.join(self.fake, "etc/shadow"), "root:!:1::::::\nadmin:$y$j9T$abc:20000:0:99999:7:::\n")
+        write_file(os.path.join(self.fake, "etc/shadow"), f"root:!:1::::::\nadmin:{h}:{changed}:0:99999:7:::\n")
+
+    def enable_2fa(self):
+        secret = self.helios("account-2fa-begin")["secret"]
+        codes = self.helios("account-2fa-enable", stdin=self.totp(secret))["recoveryCodes"]
+        return secret, codes
+
+    def test_account_status(self):
+        self.set_shadow("old-password-123")
+        os.makedirs(os.path.join(self.fake, "etc/pam.d"))
         r = self.helios("account")
         self.assertEqual(r["user"], "admin")
         self.assertEqual(r["sshKeys"], 1)
         self.assertEqual(r["passwordChanged"], 20000 * 86400)
+        self.assertTrue(r["mutableUsers"])
         self.assertFalse(r["totp"])
         self.assertFalse(r["totpPending"])
+        # PAM without the module (an older generation): two-factor isn't enforced
+        self.assertFalse(r["totpEnforced"])
+        totp_dir = os.path.join(self.data, "totp")
+        write_file(os.path.join(self.fake, "etc/pam.d/cockpit"),
+                   f"auth required /nix/store/x/lib/security/pam_google_authenticator.so no_increment_hotp nullok secret={totp_dir}/${{USER}} user=root\n")
+        self.assertTrue(self.helios("account")["totpEnforced"])
 
     def test_account_password(self):
-        for bad in ("short", "x" * 129, "two\nlines-of-password"):
-            r = self.helios("account-password", stdin=bad + "\n", ok=False)
+        self.set_shadow("old-password-123")
+        good = {"current": "old-password-123", "new": "correct-horse-battery"}
+        for bad in ({**good, "new": "short"}, {**good, "new": "x" * 129}, {**good, "new": "two\nlines-of-password"},
+                    {**good, "current": "wrong-password-1"}, {**good, "current": ""}):
+            r = self.helios("account-password", stdin=json.dumps(bad), ok=False)
             self.assertFalse(r["ok"], bad)
+        self.assertIn("current password is wrong", self.helios("account-password", stdin=json.dumps({**good, "current": "nope-nope-nope"}), ok=False)["error"])
+        self.assertFalse(self.helios("account-password", stdin="correct-horse-battery\n", ok=False)["ok"])   # not JSON
         self.assertNotIn("chpasswd", self.stub_log())
-        self.helios("account-password", stdin="correct-horse-battery\n")
+        self.helios("account-password", stdin=json.dumps(good))
         self.assertIn("chpasswd admin:correct-horse-battery", self.stub_log())
+
+    def test_account_password_locked_or_immutable(self):
+        os.makedirs(os.path.join(self.fake, "etc"), exist_ok=True)
+        write_file(os.path.join(self.fake, "etc/shadow"), "admin:!:20000:0:99999:7:::\n")
+        r = self.helios("account-password", stdin=json.dumps({"current": "", "new": "correct-horse-battery"}), ok=False)
+        self.assertIn("current password is wrong", r["error"])
+        conf = load_json(self.conf_path)
+        conf["admin"]["mutableUsers"] = False
+        write_json(self.conf_path, conf)
+        self.set_shadow("old-password-123")
+        r = self.helios("account-password", stdin=json.dumps({"current": "old-password-123", "new": "correct-horse-battery"}), ok=False)
+        self.assertIn("mutableUsers", r["error"])
+        self.assertFalse(self.helios("account")["mutableUsers"])
+        self.assertNotIn("chpasswd", self.stub_log())
 
     def test_account_2fa(self):
         b = self.helios("account-2fa-begin")
@@ -1609,10 +1651,37 @@ class HeliosCtl(unittest.TestCase):
         self.assertEqual(lines[0], secret)
         self.assertIn('" TOTP_AUTH', lines)
         self.assertEqual(lines[-5:], r["recoveryCodes"])
+        self.assertEqual([x for x in os.listdir(os.path.join(self.data, "totp"))], ["admin"])   # no temp files left
         st = self.helios("account")
         self.assertTrue(st["totp"])
         self.assertFalse(st["totpPending"])
-        self.helios("account-2fa-disable")
+
+    def test_account_2fa_changes_need_a_current_code(self):
+        secret, codes = self.enable_2fa()
+        f = os.path.join(self.data, "totp", "admin")
+        wrong = "%06d" % ((int(self.totp(secret)) + 500000) % 1000000)
+        for cmd in ("account-2fa-disable", "account-2fa-begin"):
+            for code in ("", wrong, "99999999", "abc"):
+                r = self.helios(cmd, stdin=code, ok=False)
+                self.assertFalse(r["ok"], (cmd, code))
+        self.assertTrue(os.path.exists(f))
+        self.assertFalse(self.helios("account")["totpPending"])
+        # Moving to a new phone: a current code starts it; the old key stays live until the new one is confirmed
+        new = self.helios("account-2fa-begin", stdin=self.totp(secret))["secret"]
+        self.assertNotEqual(new, secret)
+        self.assertEqual(read_file(f).splitlines()[0], secret)
+        self.helios("account-2fa-enable", stdin=self.totp(new))
+        self.assertEqual(read_file(f).splitlines()[0], new)
+
+    def test_account_2fa_recovery_code_is_used_up(self):
+        secret, codes = self.enable_2fa()
+        f = os.path.join(self.data, "totp", "admin")
+        self.helios("account-2fa-begin", stdin=codes[2])        # a recovery code works once
+        self.assertNotIn(codes[2], read_file(f).splitlines())
+        self.assertEqual(os.stat(f).st_mode & 0o777, 0o400)
+        self.assertEqual(read_file(f).splitlines()[0], secret)
+        self.assertFalse(self.helios("account-2fa-disable", stdin=codes[2], ok=False)["ok"])
+        self.helios("account-2fa-disable", stdin=codes[0])
         self.assertFalse(os.path.exists(f))
         self.assertFalse(self.helios("account")["totp"])
 

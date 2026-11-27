@@ -25,7 +25,9 @@ track `main` through the flake, and the commit hash is the version.
 
 ### Added
 - Admin account card (Photosphere → Advanced): change the admin password and turn on
-  two-factor sign-in (TOTP) for Cockpit, with one-use recovery codes.
+  two-factor sign-in (TOTP) for Cockpit, with one-use recovery codes. Changes
+  need the current password or code. The hardening VM test signs in through
+  Cockpit's PAM service.
 - Installer boot menu: **Install HeliOS** starts the install wizard directly;
   **Recovery shell** boots to a root shell with `helios-mount` for repairing an
   installed router.
