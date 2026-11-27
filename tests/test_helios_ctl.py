@@ -1655,7 +1655,7 @@ class HeliosCtl(unittest.TestCase):
         r = self.helios("account-2fa-enable", stdin=self.totp(secret) + "\n")
         self.assertEqual(len(r["recoveryCodes"]), 5)
         for c in r["recoveryCodes"]:
-            self.assertRegex(c, r"^\d{8}$")
+            self.assertRegex(c, r"^[1-9]\d{7}$")   # PAM ignores scratch codes below 10000000
         f = os.path.join(self.data, "totp", "admin")
         self.assertEqual(os.stat(f).st_mode & 0o777, 0o400)
         lines = read_file(f).splitlines()

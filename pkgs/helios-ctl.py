@@ -4515,7 +4515,9 @@ def cmd_account_2fa_enable(a):
         fail("Enter the 6-digit code from the app")
     if not totp_ok(pending["secret"], code):
         fail("That code doesn't match. Check the phone's clock is right and try the next code")
-    recovery = [f"{secrets.randbelow(10 ** 8):08d}" for _ in range(5)]
+    # pam_google_authenticator only reads scratch codes from 10000000 to 99999999, and stops
+    # at the first one outside that: a leading 0 would make it and every later code useless
+    recovery = [str(10 ** 7 + secrets.randbelow(9 * 10 ** 7)) for _ in range(5)]
     write_private(totp_file(user), "\n".join([
         pending["secret"],
         '" RATE_LIMIT 3 30',
