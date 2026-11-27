@@ -1,5 +1,8 @@
 """End-to-end tests for helios-ctl with stubbed system tools, a mock AdGuard API and a mock ntfy."""
 import base64
+import hashlib
+import hmac
+import struct
 import json
 import re
 import os
@@ -120,6 +123,7 @@ class HeliosCtl(unittest.TestCase):
                                "wgSubnet": "10.61.0", "ovpnSubnet": "10.62.0"}
         conf["detectFile"] = os.path.join(self.tmp, "detect", "hardware.json")
         conf["solarWind"]["tokenFile"] = os.path.join(self.data, "solarwind-token")
+        conf["admin"] = {"user": "admin", "sshKeys": 1, "totpDir": os.path.join(self.data, "totp")}
         self.conf_path = os.path.join(self.tmp, "config.json")
         write_json(self.conf_path, conf)
         with open(os.path.join(self.cfg, "configuration.nix"), "w") as f:
@@ -1555,6 +1559,76 @@ class HeliosCtl(unittest.TestCase):
         self.assertEqual(self.helios("remote")["settings"]["ingress"]["proxy"]["networks"], ["things", "family"])
         self.helios("network-remove", "things")
         self.assertEqual(self.helios("remote")["settings"]["ingress"]["proxy"]["networks"], ["family"])
+
+    # ------------------------------------------------------------ admin account
+    @staticmethod
+    def totp(secret, at=None):
+        key = base64.b32decode(secret + "=" * (-len(secret) % 8))
+        mac = hmac.new(key, struct.pack(">Q", int((at or time.time()) // 30)), hashlib.sha1).digest()
+        off = mac[-1] & 0x0F
+        return "%06d" % ((struct.unpack(">I", mac[off:off + 4])[0] & 0x7FFFFFFF) % 1000000)
+
+    def test_account_status(self):
+        os.makedirs(os.path.join(self.fake, "etc"), exist_ok=True)
+        write_file(os.path.join(self.fake, "etc/shadow"), "root:!:1::::::\nadmin:$y$j9T$abc:20000:0:99999:7:::\n")
+        r = self.helios("account")
+        self.assertEqual(r["user"], "admin")
+        self.assertEqual(r["sshKeys"], 1)
+        self.assertEqual(r["passwordChanged"], 20000 * 86400)
+        self.assertFalse(r["totp"])
+        self.assertFalse(r["totpPending"])
+
+    def test_account_password(self):
+        for bad in ("short", "x" * 129, "two\nlines-of-password"):
+            r = self.helios("account-password", stdin=bad + "\n", ok=False)
+            self.assertFalse(r["ok"], bad)
+        self.assertNotIn("chpasswd", self.stub_log())
+        self.helios("account-password", stdin="correct-horse-battery\n")
+        self.assertIn("chpasswd admin:correct-horse-battery", self.stub_log())
+
+    def test_account_2fa(self):
+        b = self.helios("account-2fa-begin")
+        secret = b["secret"]
+        self.assertRegex(secret, r"^[A-Z2-7]{32}$")
+        self.assertIn(f"secret={secret}", b["uri"])
+        self.assertTrue(b["uri"].startswith("otpauth://totp/HeliOS%20%28helios%29:admin?"))
+        self.assertIn("<svg", b["qrSvg"])
+        self.assertTrue(self.helios("account")["totpPending"])
+        # Nothing is live until a code proves the app has the secret
+        self.assertFalse(os.path.exists(os.path.join(self.data, "totp", "admin")))
+        wrong = "%06d" % ((int(self.totp(secret)) + 500000) % 1000000)
+        self.assertFalse(self.helios("account-2fa-enable", stdin=wrong, ok=False)["ok"])
+        self.assertFalse(self.helios("account-2fa-enable", stdin="12ab56", ok=False)["ok"])
+        r = self.helios("account-2fa-enable", stdin=self.totp(secret) + "\n")
+        self.assertEqual(len(r["recoveryCodes"]), 5)
+        for c in r["recoveryCodes"]:
+            self.assertRegex(c, r"^\d{8}$")
+        f = os.path.join(self.data, "totp", "admin")
+        self.assertEqual(os.stat(f).st_mode & 0o777, 0o400)
+        lines = read_file(f).splitlines()
+        self.assertEqual(lines[0], secret)
+        self.assertIn('" TOTP_AUTH', lines)
+        self.assertEqual(lines[-5:], r["recoveryCodes"])
+        st = self.helios("account")
+        self.assertTrue(st["totp"])
+        self.assertFalse(st["totpPending"])
+        self.helios("account-2fa-disable")
+        self.assertFalse(os.path.exists(f))
+        self.assertFalse(self.helios("account")["totp"])
+
+    def test_account_2fa_setup_expires(self):
+        secret = self.helios("account-2fa-begin")["secret"]
+        pending = os.path.join(self.data, "totp", ".pending-admin.json")
+        write_json(pending, {"secret": secret, "created": int(time.time()) - 3600})
+        r = self.helios("account-2fa-enable", stdin=self.totp(secret), ok=False)
+        self.assertIn("expired", r["error"])
+        self.assertFalse(os.path.exists(os.path.join(self.data, "totp", "admin")))
+
+    def test_account_needs_admin_user(self):
+        conf = load_json(self.conf_path)
+        conf["admin"] = {"user": "../etc"}
+        write_json(self.conf_path, conf)
+        self.assertFalse(self.helios("account", ok=False)["ok"])
 
 
 if __name__ == "__main__":

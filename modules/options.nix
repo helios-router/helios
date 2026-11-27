@@ -251,6 +251,7 @@ in
     # Everything helios-ctl / Photosphere need to know, generated from the options
     environment.etc."helios/config.json".text = builtins.toJSON {
       inherit (cfg) hostName domain configDir stateFile;
+      admin = { inherit (cfg.admin) user; sshKeys = builtins.length cfg.admin.sshKeys; totpDir = "/var/lib/helios/totp"; };
       inherit (cfg.interfaces) wanVlan;
       networks = networks;
       roles = catalog.roles;

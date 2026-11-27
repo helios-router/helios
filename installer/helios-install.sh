@@ -16,11 +16,20 @@ echo "== HeliOS installer =="
 online=1
 getent hosts github.com >/dev/null || online=""
 if [ -z "$online" ] && [ -z "$HELIOS_OFFLINE" ]; then
-  echo "No internet. This is the netinstall image, which downloads HeliOS and NixOS during"
-  echo "the install: plug in a cable with internet and retry, or use the offline image."
+  echo "No internet, and this build of the installer carries no install files:"
+  echo "plug in a cable with internet and retry."
   exit 1
 fi
-[ -n "$online" ] || echo "No internet: installing from this image (everything for a standard install is on it)."
+# The image has everything for a standard install; with internet, the newest
+# HeliOS and NixOS can be fetched instead (what `nix flake update` gives later)
+updates=""
+if [ -z "$online" ]; then
+  echo "No internet: installing from this image (everything for a standard install is on it)."
+elif [ -z "$HELIOS_OFFLINE" ]; then
+  updates=1
+elif yesno "Internet found. Download updates during the install (newest HeliOS and NixOS)" y; then
+  updates=1
+fi
 
 # ---------------------------------------------------------------- disk
 echo; echo "Disks:"; lsblk -dno NAME,SIZE,MODEL,TRAN -e 7,11
@@ -56,7 +65,7 @@ fi
 o_notify=$(b "  Notifications (self-hosted ntfy push alerts)" y)
 o_print=$(b "  Print server (CUPS)" n)
 o_remote=$(b "  Remote access / Heliosphere (WireGuard, OpenVPN, proxy)" n)
-if [ -n "$online" ] || [ -z "$HELIOS_OFFLINE" ]; then
+if [ -n "$online" ]; then
   o_logai=$(b "  Log AI (local LLM log triage; needs a model file later)" n)
 else
   o_logai=false
@@ -70,6 +79,7 @@ cat <<SUMMARY
   hostname  $host.$domain     admin  $user
   trunk     $trunk ($trunkMac), WAN VLAN $wanVlan
   tailscale $o_tailscale${login:+ via $login}  notifications $o_notify  printing $o_print  remote $o_remote  logAI $o_logai
+  software  $(if [ -n "$updates" ]; then echo "newest HeliOS and NixOS (downloaded)"; else echo "the versions on this image"; fi)
 SUMMARY
 confirm=$(ask "Type the disk name ($disk) to erase it and install" "")
 [ "$confirm" = "$disk" ] || { echo "Cancelled; nothing written."; exit 1; }
@@ -113,10 +123,23 @@ cfg=/mnt/etc/nixos
 nixos-generate-config --root /mnt
 rm -f "$cfg/configuration.nix"
 install -m644 "$HELIOS_TEMPLATES"/{flake.nix,site.nix,state.json,tailnet-policy.hujson} "$cfg/"
-# Offline image: pin HeliOS and nixpkgs to the exact sources on this image
+# Pin HeliOS and nixpkgs to the exact sources on this image (replaced below
+# when downloading updates)
+pinned=""
 if [ -n "$HELIOS_LOCK" ]; then
+  pinned=1
   sed "s|@HELIOS_NARHASH@|$(nix --extra-experimental-features nix-command hash path "$HELIOS_SRC")|" "$HELIOS_LOCK" > "$cfg/flake.lock"
   chmod 644 "$cfg/flake.lock"
+fi
+if [ -n "$updates" ] && [ -n "$HELIOS_LOCK" ]; then
+  echo; echo "Fetching the newest HeliOS and NixOS versions…"
+  if nix --extra-experimental-features 'nix-command flakes' flake update --flake "path:$cfg"; then
+    pinned=""
+  else
+    echo "Couldn't fetch updates; installing the versions on this image instead."
+    updates=""
+    sed "s|@HELIOS_NARHASH@|$(nix --extra-experimental-features nix-command hash path "$HELIOS_SRC")|" "$HELIOS_LOCK" > "$cfg/flake.lock"
+  fi
 fi
 esc() { printf '%s' "$1" | sed 's/[\/&|]/\\&/g'; }
 sed -i -e "s|nixosConfigurations\.helios|nixosConfigurations.\"$host\"|" \
@@ -143,21 +166,24 @@ git -C "$cfg" add -A
 git -C "$cfg" -c user.name=helios-install -c user.email=root@localhost commit -qm "HeliOS install: $host"
 
 # ---------------------------------------------------------------- install
-opts=()
-if [ -n "$online" ]; then
-  echo; echo "Installing (anything not on this image is downloaded)…"
+# Small generated files (unit files, configs) are marked "build locally, don't
+# substitute"; always-allow-substitutes copies them from this image instead of
+# rebuilding them and their build tools. nixos-install itself adds this image's
+# store as a substituter ("auto").
+opts=(--option always-allow-substitutes true)
+if [ -n "$updates" ]; then
+  echo; echo "Installing (downloading what changed since this image was made)…"
+elif [ -n "$online" ]; then
+  echo; echo "Installing from this image (anything not on it is downloaded)…"
 else
   echo; echo "Installing from this image…"
-  # Copy everything from this image's store ("auto" = the running system's store),
-  # and don't wait on network caches. Note: an empty substituters setting would also
-  # drop nixos-install's own local copy and make Nix build everything from source.
-  # always-allow-substitutes: small generated files (unit files, configs) are marked
-  # "build locally, don't substitute", so without it Nix rebuilds them, and their
-  # build tools, even though identical copies are on this image.
-  opts=(--option substituters "auto?trusted=1" --option always-allow-substitutes true)
+  # Only this image's store, so nothing waits on network caches. Note: an empty
+  # substituters setting would also drop nixos-install's own local copy and make
+  # Nix build everything from source.
+  opts+=(--option substituters "auto?trusted=1")
 fi
 nixos-install --root /mnt --flake "$cfg#$host" --no-root-passwd "${opts[@]}"
-if [ -n "$HELIOS_SOURCES" ]; then
+if [ -n "$pinned" ] && [ -n "$HELIOS_SOURCES" ]; then
   # The sources flake.lock points at, so the router can rebuild before it's online
   # shellcheck disable=SC2086
   nix copy --no-check-sigs --to "local?root=/mnt" $HELIOS_SOURCES
@@ -181,4 +207,9 @@ Done. Remove the USB stick and reboot. Then:
   - Plug the trunk port ($trunk) into your switch's trunk; the modem's port goes in VLAN $wanVlan.
   - Open Cockpit on https://$host.$domain:9090 from a trusted-network device.
   - Your config is in /etc/nixos (a git repo). Edit site.nix for anything not in Photosphere.
+  - Photosphere → Advanced → Admin account: change the password, turn on two-factor sign-in.
 DONE
+if [ -t 0 ] && yesno "Reboot now (remove the USB stick first)" y; then
+  umount -R /mnt 2>/dev/null || true
+  reboot
+fi

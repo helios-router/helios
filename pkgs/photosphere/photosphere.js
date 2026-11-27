@@ -2197,13 +2197,105 @@ function viewPrinting(root) {
 }
 
 /* ------------------------------------------------------------- Advanced */
+/* ------------------------------------------------------- Admin account */
+// The router login (Cockpit, sudo): change its password, and two-factor sign-in
+// for Cockpit with an authenticator app (TOTP). Takes effect at once: no apply.
+function accountCard(r, reload) {
+  const err = hwErr();
+  const on = r.totp;
+  return card("Admin account", on ? statusEl("ok", "Two-factor on") : statusEl("warn", "Password only"),
+    h("dl", { class: "kv" },
+      h("dt", {}, "Login"), h("dd", { class: "mono" }, r.user),
+      h("dt", {}, "Password set"), h("dd", {}, r.passwordChanged ? new Date(r.passwordChanged * 1000).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" }) : "—"),
+      h("dt", {}, "Two-factor sign-in"), h("dd", {}, on ? "On: Cockpit asks for a code from your app" : "Off"),
+      h("dt", {}, "SSH keys"), h("dd", {}, `${r.sshKeys || 0} (set in site.nix)`)),
+    h("p", { class: "muted small" }, "Two-factor sign-in covers Cockpit (and so these pages). SSH only takes keys, and the console and Cockpit's administrative access keep the password alone, so a lost phone can't lock you out of the router itself."),
+    err,
+    h("div", { class: "card-actions" },
+      h("button", { class: "btn btn-secondary btn-sm", onclick: () => passwordDialog(r.user, reload) }, "Change password"),
+      on
+        ? [h("button", { class: "btn btn-secondary btn-sm", onclick: () => totpSetup(r.user, reload, true) }, "Move to a new phone"),
+           h("button", { class: "btn btn-danger btn-sm", onclick: async () => {
+             if (!await confirmDialog("Turn off two-factor sign-in?", "Cockpit will ask for the password only. The app's codes and the recovery codes stop working.", "Turn off", true)) return;
+             err.hidden = true;
+             api("account-2fa-disable").then(() => { toast("Two-factor sign-in is off"); reload(); }).catch(e => hwShowErr(err, e));
+           } }, "Turn off")]
+        : h("button", { class: "btn btn-primary btn-sm", onclick: () => totpSetup(r.user, reload, false) }, "Turn on two-factor sign-in")));
+}
+
+function passwordDialog(user, reload) {
+  const pw = h("input", { type: "password", autocomplete: "new-password" });
+  const pw2 = h("input", { type: "password", autocomplete: "new-password" });
+  const err = hwErr();
+  modal({ title: `New password for ${user}`, body: [
+    h("p", {}, "Used to sign in to Cockpit, for sudo and on the console. It changes right away; this session stays signed in."),
+    err,
+    h("label", { class: "field" }, h("span", {}, "New password"), pw, h("span", { class: "help" }, "12–128 characters. A passphrase of a few words works well.")),
+    h("label", { class: "field" }, h("span", {}, "Confirm"), pw2)],
+  foot: close => [
+    h("button", { class: "btn btn-primary", onclick: ev => {
+      err.hidden = true;
+      if (pw.value !== pw2.value) return hwShowErr(err, new Error("The two passwords don't match"));
+      ev.target.disabled = true;
+      apiInput(pw.value + "\n", "account-password")
+        .then(() => { close(); toast("Password changed"); reload(); })
+        .catch(e => hwShowErr(err, e))
+        .finally(() => { ev.target.disabled = false; });
+    } }, "Change password"),
+    h("button", { class: "btn btn-link", onclick: close }, "Cancel")] });
+}
+
+function totpSetup(user, reload, replacing) {
+  api("account-2fa-begin").then(b => {
+    const qr = b.qrSvg ? safeSvg(b.qrSvg) : null;
+    const code = h("input", { type: "text", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 7, class: "mono", placeholder: "123456" });
+    const err = hwErr();
+    const body = h("div", {},
+      h("p", {}, "1. In an authenticator app (Aegis, 2FAS, Google Authenticator, a password manager…), add an account by scanning this code, or type in the key."),
+      replacing ? h("div", { class: "alert alert-info small" }, "The current app keeps working until you finish here.") : null,
+      h("div", { class: "secret-grid" },
+        qr ? h("div", { class: "qr", role: "img", "aria-label": "QR code for the authenticator app" }, qr) : null,
+        h("div", {},
+          h("div", { class: "muted small" }, "Key"), h("div", { class: "mono", style: "word-break:break-all;font-size:1.05em;margin:4px 0 12px" }, b.secret.replace(/(.{4})/g, "$1 ").trim()),
+          h("div", { class: "muted small" }, `Account: ${user} · time-based · 6 digits · 30 s`))),
+      h("p", { style: "margin-top:14px" }, "2. Enter the code the app shows now."),
+      err,
+      h("label", { class: "field" }, h("span", {}, "Code"), code));
+    const m = modal({ title: "Two-factor sign-in", wide: true, body, foot: close => [
+      h("button", { class: "btn btn-primary", onclick: ev => {
+        err.hidden = true; ev.target.disabled = true;
+        apiInput(code.value.trim(), "account-2fa-enable")
+          .then(r => { close(); recoveryDialog(r.recoveryCodes); reload(); })
+          .catch(e => hwShowErr(err, e))
+          .finally(() => { ev.target.disabled = false; });
+      } }, "Turn on"),
+      h("button", { class: "btn btn-link", onclick: close }, "Cancel")] });
+    code.addEventListener("keydown", ev => { if (ev.key === "Enter") m.root.querySelector(".btn-primary").click(); });
+    code.focus();
+  }).catch(e => toast(e.message, true));
+}
+
+function recoveryDialog(codes) {
+  const text = `HeliOS recovery codes (each works once, in place of an app code):\n${codes.join("\n")}\n`;
+  const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+  modal({ title: "Two-factor sign-in is on", onClose: () => URL.revokeObjectURL(url), body: [
+    h("div", { class: "alert alert-warn" }, h("strong", {}, "Save these recovery codes now. "),
+      "Each one signs you in once without the phone. They aren't shown again."),
+    h("pre", { class: "mono", style: "font-size:1.1em;line-height:1.6" }, codes.join("\n")),
+    h("p", { class: "muted small" }, "Lost the phone and the codes? Sign in with SSH or on the console and delete /var/lib/helios/totp/<login>, or boot the installer's Recovery shell.")],
+  foot: close => [h("a", { class: "btn btn-primary", href: url, download: "helios-recovery-codes.txt" }, "Download"),
+    h("button", { class: "btn btn-link", onclick: close }, "I've saved them")] });
+}
+
 function viewAdvanced(root) {
   const grid = h("div", { class: "grid" });
   root.append(h("div", { class: "alert alert-info small" }, "Administration and settings most people never need. Hide this page again with the gear button at the top right."), grid);
   const link = (href, label, ext) => h("a", { href, target: ext ? "_blank" : null, rel: ext ? "noopener noreferrer" : null,
     onclick: ev => { if (!ext && window.cockpit && cockpit.jump) { ev.preventDefault(); cockpit.jump(href.replace(/^\.\./, "")); } } }, label);
-  const svc = h("div"), lw = h("div"), mt = h("div"), sys = h("div"), bk = h("div"), drv = h("div"), sec = h("div");
-  grid.append(svc, mt, lw, sys, bk, drv, sec);
+  const svc = h("div"), lw = h("div"), mt = h("div"), sys = h("div"), bk = h("div"), drv = h("div"), sec = h("div"), acct = h("div");
+  grid.append(acct, svc, mt, lw, sys, bk, drv, sec);
+  const loadAcct = () => api("account").then(r => acct.replaceChildren(accountCard(r, loadAcct))).catch(e => acct.replaceChildren(h("div", { class: "alert alert-bad" }, e.message)));
+  loadAcct();
   const loadMt = () => api("reboot-status").then(r => mt.replaceChildren(maintenanceCard(r, loadMt))).catch(e => mt.replaceChildren(h("div", { class: "alert alert-bad" }, e.message)));
   loadMt();
   const loadLw = () => SERVICES.logwatch && SERVICES.logwatch.enabled

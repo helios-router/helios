@@ -1,5 +1,9 @@
 # Airlock: the one controlled way in.
 # Admin access: your user, SSH (keys only; password only on the physical rescue port).
+# Cockpit sign-in: password, plus a one-time code once two-factor sign-in is on
+# (Photosphere → Advanced → Admin account). The code's secret lives in
+# /var/lib/helios/totp/<user>, root-only; deleting that file turns it off
+# again (from SSH, the console or the installer's recovery shell).
 { config, lib, ... }:
 
 let cfg = config.helios; in
@@ -26,6 +30,18 @@ let cfg = config.helios; in
         PasswordAuthentication yes
     '';
   };
+
+  # TOTP for Cockpit only: SSH is key-only, and Cockpit's "administrative access"
+  # (sudo) and the console keep the password alone, so a lost phone never locks
+  # you out of the box itself. allowNullOTP: no secret file = no code asked.
+  security.pam.services.cockpit = {
+    googleAuthenticator = { enable = true; allowNullOTP = true; };
+    rules.auth.google_authenticator.settings = {
+      secret = "/var/lib/helios/totp/\${USER}";
+      user = "root";
+    };
+  };
+  systemd.tmpfiles.rules = [ "d /var/lib/helios/totp 0700 root root -" ];
 
   security.sudo.execWheelOnly = true;
   nix.settings.allowed-users = [ "@wheel" ];

@@ -25,8 +25,8 @@
           }
         ];
       };
-      # Installer images: offline (default) carries everything a standard install
-      # needs; netinstall downloads it during the install
+      # The installer image carries everything a standard install needs, and
+      # offers to download updates during the install when it finds internet
       installerArgs = { heliosSrc = self; nixpkgsSrc = nixpkgs; offlinePaths = import ./installer/offline.nix { inherit self nixpkgs system; }; };
       installer = lib.nixosSystem { inherit system; modules = [ (import ./installer/iso.nix installerArgs) ]; };
       # The offline image's contents come from the build graph, which needs
@@ -36,7 +36,9 @@
         echo "The offline installer image needs impure evaluation: nix build --impure .#installer-iso" >&2
         exit 1
       '';
-      installer-netinstall = lib.nixosSystem {
+      # The same installer without the image contents: evaluates purely, for
+      # `nix flake check` (not built as an image)
+      installer-check = lib.nixosSystem {
         inherit system;
         modules = [ (import ./installer/iso.nix (installerArgs // { offlinePaths = [ ]; })) ];
       };
@@ -49,17 +51,16 @@
         description = "A HeliOS site: configuration.nix, site.nix and state.json to fill in";
       };
 
-      nixosConfigurations = { inherit example installer-netinstall; } // lib.optionalAttrs impure { inherit installer; };
+      nixosConfigurations = { inherit example; } // lib.optionalAttrs impure { inherit installer; };
       legacyPackages.${system}.vmTests = import ./tests/vm { inherit self installerArgs; pkgs = nixpkgs.legacyPackages.${system}; };
       packages.${system} = {
         installer-iso = if impure then installer.config.system.build.isoImage else needsImpure;
-        installer-iso-netinstall = installer-netinstall.config.system.build.isoImage;
         default = self.packages.${system}.installer-iso;
       };
       # `nix flake check`: the template evaluates and its firewall/system builds
       checks.${system} = {
         example = example.config.system.build.toplevel;
-        installer = installer-netinstall.config.system.build.toplevel;
+        installer = installer-check.config.system.build.toplevel;
       };
     };
 }

@@ -7,7 +7,7 @@
 | `modules/` | NixOS modules; `default.nix` imports them, `options.nix` declares `helios.*`. |
 | `pkgs/` | `helios-ctl.py` (the backend), `photosphere/` (the Cockpit plugin: `index.html`, `photosphere.js`, `photosphere.css`, `manifest.json`), `logwatch.sh`, and the catalogs `*.json`. |
 | `templates/` | `site.nix`, `state.json`, `flake.nix`, `configuration.nix`, tailnet policy, Caddyfile. |
-| `installer/` | `iso.nix` (installer ISO) and `helios-install.sh`. |
+| `installer/` | `iso.nix` (the installer ISO: boot menu with Install HeliOS and Recovery shell, `helios-mount`), `tool.nix` (`helios-install` and its pinned `flake.lock`), `offline.nix` (what the image carries to install with no network) and `helios-install.sh`. |
 | `tests/` | `test_helios_ctl.py`, `fixtures/`, `stubs/` (fake system tools), `mock/base1/cockpit.js` (fake Cockpit), `demo.sh`, `build-pages.sh`, `browsers.cjs`, `shoot.js`. |
 | `docs/` | Design notes: `heliosphere.md` (remote access contract), `drivers.md` (driver design and the phase 1 interface). |
 | `wiki/` | Source of these wiki pages. |
@@ -46,7 +46,7 @@ shellcheck -s bash installer/helios-install.sh tests/*.sh pkgs/*.sh
 nix flake check --print-build-logs
 ```
 
-Builds the `example` system (the site template with placeholders, which exercises the firewall and every module) and the `installer` system. Build the ISO with `nix build .#installer-iso`.
+Builds the `example` system (the site template with placeholders, which exercises the firewall and every module) and the `installer` system. Build the ISO with `nix build --impure .#installer-iso`.
 
 ### Browsers
 
@@ -78,7 +78,7 @@ then commit and push the branch. Do not edit `gh-pages` by hand.
 
 ## Calling helios-ctl by hand
 
-On a router: `sudo helios-ctl <command>`; every command prints one line of JSON with `"ok": true` or an error. Examples: `status`, `devices`, `networks`, `pending`, `apply-start`, `apply-status`, `confirm`, `rollback`, `history`, `qos`, `upnp`, `hardware`, `remote`, `profiles`, `services`, `notify-info`.
+On a router: `sudo helios-ctl <command>`; every command prints one line of JSON with `"ok": true` or an error. Examples: `status`, `devices`, `networks`, `pending`, `apply-start`, `apply-status`, `confirm`, `rollback`, `history`, `qos`, `upnp`, `hardware`, `remote`, `profiles`, `services`, `notify-info`, `account`.
 
 | Group | Commands |
 |---|---|

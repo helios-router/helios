@@ -18,6 +18,8 @@ import argparse
 import base64
 import datetime as dt
 import fcntl
+import hashlib
+import hmac
 import ipaddress
 import json
 import os
@@ -28,6 +30,7 @@ import shlex
 import shutil
 import socket
 import string
+import struct
 import subprocess
 import sys
 import tempfile
@@ -4309,8 +4312,140 @@ def describe_remote(old, new):
     return msgs
 
 
+# ------------------------------------------------------------------ admin account
+# The admin login's password (shadow, via chpasswd) and two-factor sign-in for
+# Cockpit: a TOTP secret in pam_google_authenticator's file format, kept root-only
+# in TOTP_DIR/<user> (airlock.nix points the cockpit PAM service there).
+ADMIN = CFG.get("admin", {}) or {}
+TOTP_DIR = ADMIN.get("totpDir") or os.path.join(DATA_DIR, "totp")
+TOTP_PENDING_SECONDS = 15 * 60
+TOTP_PERIOD = 30
+
+
+def admin_user():
+    user = ADMIN.get("user") or ""
+    if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", user):
+        fail("No admin user in the site configuration")
+    return user
+
+
+def totp_file(user):
+    return os.path.join(TOTP_DIR, user)
+
+
+def totp_pending_file(user):
+    return os.path.join(TOTP_DIR, f".pending-{user}.json")
+
+
+def totp_code(secret, counter):
+    """RFC 6238 (SHA-1, 6 digits) for one 30-second step."""
+    key = base64.b32decode(secret + "=" * (-len(secret) % 8))
+    mac = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    off = mac[-1] & 0x0F
+    return "%06d" % ((struct.unpack(">I", mac[off:off + 4])[0] & 0x7FFFFFFF) % 1000000)
+
+
+def totp_ok(secret, code, at=None):
+    """The code for now, or one step either side (clock drift)."""
+    step = int((at if at is not None else time.time()) // TOTP_PERIOD)
+    return any(hmac.compare_digest(totp_code(secret, step + d), code) for d in (-1, 0, 1))
+
+
+def write_private(path, text):
+    """Root-only file, written atomically."""
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def password_changed(user):
+    """When the password was last set (shadow's day count), or None."""
+    for line in read("/etc/shadow").splitlines():
+        f = line.split(":")
+        if len(f) > 2 and f[0] == user:
+            return int(f[2]) * 86400 if f[2].isdigit() else None
+    return None
+
+
+def cmd_account(a):
+    user = admin_user()
+    pending = read_json(totp_pending_file(user), {}) or {}
+    out({"ok": True, "user": user, "sshKeys": ADMIN.get("sshKeys", 0),
+         "passwordChanged": password_changed(user),
+         "totp": os.path.exists(totp_file(user)),
+         "totpPending": bool(pending) and now() - pending.get("created", 0) < TOTP_PENDING_SECONDS})
+
+
+def cmd_account_password(a):
+    """New password on stdin (one line), never argv. Cockpit already asked for the
+    current one: these commands only run with administrative access (sudo)."""
+    user = admin_user()
+    pw = sys.stdin.read().rstrip("\r\n")
+    if not 12 <= len(pw) <= 128:
+        fail("Password must be 12 to 128 characters")
+    if any(c in pw for c in "\r\n\0"):
+        fail("Password can't contain line breaks")
+    if pw.lower() == user.lower():
+        fail("Password can't be the login name")
+    r = run(["chpasswd"], input=f"{user}:{pw}\n")
+    if r.returncode != 0:
+        fail(f"chpasswd failed: {r.stderr.strip() or r.stdout.strip()}")
+    out({"ok": True, "user": user})
+
+
+def cmd_account_2fa_begin(a):
+    """Make a new secret and show it once (QR + text); it only takes effect after
+    account-2fa-enable proves the authenticator app has it."""
+    user = admin_user()
+    secret = base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
+    write_private(totp_pending_file(user), json.dumps({"secret": secret, "created": now()}))
+    label = f"HeliOS ({CFG.get('hostName', 'helios')})"
+    uri = "otpauth://totp/{}:{}?{}".format(urllib.parse.quote(label), urllib.parse.quote(user), urllib.parse.urlencode(
+        {"secret": secret, "issuer": label, "algorithm": "SHA1", "digits": 6, "period": TOTP_PERIOD}, quote_via=urllib.parse.quote))
+    qr = run(["qrencode", "-t", "SVG", "-o", "-"], input=uri)
+    out({"ok": True, "user": user, "secret": secret, "uri": uri, "qrSvg": qr.stdout if qr.returncode == 0 else None})
+
+
+def cmd_account_2fa_enable(a):
+    """Code from the app on stdin. On a match, the secret goes live with five
+    one-use recovery codes, shown this once."""
+    user = admin_user()
+    code = re.sub(r"\s", "", sys.stdin.read())
+    pending = read_json(totp_pending_file(user), {}) or {}
+    if not pending.get("secret") or now() - pending.get("created", 0) >= TOTP_PENDING_SECONDS:
+        fail("The setup expired: start again")
+    if not re.fullmatch(r"\d{6}", code):
+        fail("Enter the 6-digit code from the app")
+    if not totp_ok(pending["secret"], code):
+        fail("That code doesn't match. Check the phone's clock is right and try the next code")
+    recovery = [f"{secrets.randbelow(10 ** 8):08d}" for _ in range(5)]
+    write_private(totp_file(user), "\n".join([
+        pending["secret"],
+        '" RATE_LIMIT 3 30',
+        '" WINDOW_SIZE 3',
+        '" DISALLOW_REUSE',
+        '" TOTP_AUTH',
+        *recovery]) + "\n")
+    os.chmod(totp_file(user), 0o400)
+    os.remove(totp_pending_file(user))
+    out({"ok": True, "user": user, "recoveryCodes": recovery})
+
+
+def cmd_account_2fa_disable(a):
+    user = admin_user()
+    for f in (totp_file(user), totp_pending_file(user)):
+        try:
+            os.remove(f)
+        except FileNotFoundError:
+            pass
+    out({"ok": True, "user": user})
+
+
 # ------------------------------------------------------------------ main
-NO_GIT = {"detect", "reboot-status", "reboot", "reboot-window", "reboot-check", "unit-failed", "recover", "logwatch", "logwatch-model-get", "logwatch-model-fetch", "logwatch-model-remove", "logwatch-guard", "logwatch-resume", "services", "printing", "printer-models", "printer-test", "printer-pause", "print-cancel", "upnp-close", "qos-suggest", "remote-wg-rotate", "remote-wg-import", "ups-event", "ups-forward", "vulnix-report", "notify-setup", "notify-credentials", "notify-info", "notify-test", "notify-recent", "uplink-check", "counters", "vnstat", "qos", "upnp-clear"}
+NO_GIT = {"account", "account-password", "account-2fa-begin", "account-2fa-enable", "account-2fa-disable", "detect", "reboot-status", "reboot", "reboot-window", "reboot-check", "unit-failed", "recover", "logwatch", "logwatch-model-get", "logwatch-model-fetch", "logwatch-model-remove", "logwatch-guard", "logwatch-resume", "services", "printing", "printer-models", "printer-test", "printer-pause", "print-cancel", "upnp-close", "qos-suggest", "remote-wg-rotate", "remote-wg-import", "ups-event", "ups-forward", "vulnix-report", "notify-setup", "notify-credentials", "notify-info", "notify-test", "notify-recent", "uplink-check", "counters", "vnstat", "qos", "upnp-clear"}
 
 
 def main():
@@ -4480,6 +4615,10 @@ def main():
         x.add_argument("kind", choices=["wireguard", "openvpn", "auth"])
         x.set_defaults(fn=fn)
     sub.add_parser("ups-forward").set_defaults(fn=cmd_ups_forward)
+    for nm, fn in (("account", cmd_account), ("account-password", cmd_account_password),
+                   ("account-2fa-begin", cmd_account_2fa_begin), ("account-2fa-enable", cmd_account_2fa_enable),
+                   ("account-2fa-disable", cmd_account_2fa_disable)):
+        sub.add_parser(nm).set_defaults(fn=fn)
     x = sub.add_parser("vulnix-report")
     x.add_argument("file")
     x.set_defaults(fn=cmd_vulnix_report)

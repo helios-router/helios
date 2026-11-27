@@ -9,35 +9,40 @@ Keep that repository private. It will hold your MAC addresses, names and keys.
 * A small x86-64 box with one NIC for the switch trunk. A second NIC is optional and becomes the rescue port.
 * A managed switch that supports VLANs, and VLAN-aware access points if you use Wi-Fi. HeliOS does not configure them.
 * A modem or ONT. It sits in its own VLAN (default 10) on the switch.
-* Internet access during install (the install downloads HeliOS and NixOS packages).
+* Internet during the install is optional: the installer image carries everything for a standard install.
 * Optional: a Tailscale account (or Headscale server), a tagged auth key.
 
 ## Route 1: the installer ISO
 
-There are two images:
+There is one image, a few GB: build it with `nix build --impure .#installer-iso` in a
+checkout of the repository, or download it from a CI run on `main` (artifact
+`helios-installer-iso`, kept 14 days; pull request runs don't build it).
 
-| Image | Build | Internet during install |
-|---|---|---|
-| **Offline** (default), a few GB | `nix build --impure .#installer-iso` | not needed |
-| **Netinstall**, about 1 GB | `nix build .#installer-iso-netinstall` | required |
+It carries complete HeliOS systems for the installer's choices, the tools to adapt
+them to your answers, and the exact HeliOS and nixpkgs sources it was built from, so
+it installs with no network. A router usually has no internet until it's installed.
 
-The offline image carries complete HeliOS systems for the installer's choices, the
-tools to adapt them to your answers, and the exact HeliOS and nixpkgs sources it was
-built from. A router usually has no internet until it's installed, so this is the one
-to use. With internet available it still installs from the image, and downloads only
-what isn't on it. Log AI is the one choice that needs a download, so without internet
-the installer doesn't offer it; turn it on later in Photosphere.
+If it does find internet (a cable with DHCP on any port), the installer first asks
+**Download updates during the install?** (default yes):
 
-Both images can be built in a checkout of the repository, or downloaded from a CI run on
-`main` (artifacts `helios-installer-iso` and `helios-installer-iso-netinstall`, kept 14
-days). Pull request runs don't build them.
+* **yes**: `flake.lock` is moved to the newest HeliOS and NixOS (`nix flake update`)
+  and whatever changed since the image was made is downloaded. If fetching the update
+  fails, it falls back to the image's versions.
+* **no**: it installs the versions on the image, downloading only what isn't on it.
 
-Write the image to a USB stick, boot the router from it (with the netinstall image, also
-plug in a cable with DHCP and internet), and run:
+Log AI is the one choice that needs a download, so without internet the installer
+doesn't offer it; turn it on later in Photosphere.
 
-```
-sudo helios-install
-```
+Write the image to a USB stick and boot the router from it. The boot menu has two
+entries:
+
+| Entry | What it does |
+|---|---|
+| **Install HeliOS** (default) | Starts the install wizard on the console. Leaving it (Ctrl+C) drops to a shell; `sudo helios-install` starts it again. |
+| **Recovery shell** | A root shell for repairing an installed router; see [Recovery shell](#recovery-shell). |
+
+Below them are NixOS's usual extras: **Options** (no kernel mode setting, serial
+console, copy to RAM), firmware setup and shutdown.
 
 The installer asks, in order:
 
@@ -60,9 +65,26 @@ It then prints a summary. Nothing is written until you type the disk's name to c
 2. runs `nixos-generate-config`, then installs `flake.nix`, `site.nix`, `state.json` and `tailnet-policy.hujson` from `templates/` into `/mnt/etc/nixos`, filling in your answers;
 3. makes `/etc/nixos` a git repository with a first commit;
 4. runs `nixos-install` from that flake (no root password is set);
-5. asks you to set the admin user's password, used for `sudo` and for logging in to Cockpit.
+5. asks you to set the admin user's password, used for `sudo` and for logging in to Cockpit;
+6. offers to reboot (remove the stick first).
 
-Then remove the stick and reboot. The installed router follows `github:helios-router/helios` for updates. With the offline image, its `flake.lock` starts pinned to the exact HeliOS and nixpkgs versions on the image, and those sources are copied onto the router, so it can rebuild before it ever goes online; `nix flake update` moves it to the latest. The boot loader is systemd-boot.
+The installed router follows `github:helios-router/helios` for updates. Unless you chose to download updates, its `flake.lock` starts pinned to the exact HeliOS and nixpkgs versions on the image, and those sources are copied onto the router, so it can rebuild before it ever goes online; `nix flake update` moves it to the latest. The boot loader is systemd-boot.
+
+After the first sign-in, change the password or turn on two-factor sign-in under Photosphere → Advanced → [Admin account](Page-Advanced#admin-account-card).
+
+### Recovery shell
+
+Boot the installer stick and pick **Recovery shell** to get a root shell (no wizard). From there:
+
+| Command | What it does |
+|---|---|
+| `helios-mount` | Finds the installed system by its partition labels (`nixos`, `ESP`, `swap`) and mounts it at `/mnt`, btrfs subvolumes included |
+| `nixos-enter --root /mnt` | A root shell inside the installed system |
+| `passwd <admin>` (inside) | Reset the admin password |
+| `rm /var/lib/helios/totp/<admin>` (inside) | Turn off two-factor sign-in for Cockpit |
+| `nix-env -p /nix/var/nix/profiles/system --rollback && /nix/var/nix/profiles/system/bin/switch-to-configuration boot` (inside) | Make the previous generation the default boot entry |
+
+The systemd-boot menu on the router also lists earlier generations, which is usually the quicker way back from a bad update.
 
 ## Route 2: an existing NixOS machine
 

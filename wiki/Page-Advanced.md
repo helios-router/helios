@@ -1,6 +1,24 @@
 # Advanced tab
 
-Administration and settings most people never need. This tab is only visible in advanced mode (gear button, see [Header and navigation](Page-Header-and-Navigation)). Cards, top to bottom: Services, Maintenance, AI log triage (only while that service is on), System, Backups, Drivers, Security scan.
+Administration and settings most people never need. This tab is only visible in advanced mode (gear button, see [Header and navigation](Page-Header-and-Navigation)). Cards, top to bottom: Admin account, Services, Maintenance, AI log triage (only while that service is on), System, Backups, Drivers, Security scan.
+
+## Admin account card
+
+The router login you chose in the installer (`helios.admin.user`). Changes here take effect at once: there is nothing to apply.
+
+| Row | Shows |
+|---|---|
+| Login | The admin user name |
+| Password set | When the password was last changed |
+| Two-factor sign-in | On or off |
+| SSH keys | How many keys `site.nix` authorizes (`helios.admin.sshKeys`; edit them there) |
+
+* **Change password**: 12–128 characters, typed twice. Used for Cockpit, `sudo` and the console. Your Cockpit session stays signed in.
+* **Turn on two-factor sign-in**: scan the QR code (or type the key) into an authenticator app, then enter the 6-digit code it shows. Nothing changes until that code matches. You then get five one-use recovery codes, shown once; save or download them. From then on Cockpit asks for a code after the password.
+* **Move to a new phone**: the same setup with a new key; the old app keeps working until you finish.
+* **Turn off**: Cockpit asks for the password only again.
+
+Two-factor sign-in covers Cockpit (and so Photosphere). SSH only accepts keys, and the console and Cockpit's administrative access (`sudo`) keep the password alone, so a lost phone can't lock you out of the router itself. The key is stored root-only in `/var/lib/helios/totp/<login>`; deleting that file (over SSH, on the console, or from the installer's [Recovery shell](Installation#recovery-shell)) turns two-factor sign-in off.
 
 ## Services card
 
@@ -128,7 +146,8 @@ Result of the weekly vulnerability scan (if the service is on): total findings, 
 
 ## Under the hood
 
-- `pkgs/photosphere/photosphere.js:2201-2247`: `viewAdvanced()`; `:1953-1977` `servicesCard`; `:1979-2054` `logwatchCard`; `:2082-2103` `maintenanceCard`; `:1298-1329` Drivers and Security cards.
+- `pkgs/photosphere/photosphere.js:2290-2336`: `viewAdvanced()`; `:2203-2289` `accountCard`, `passwordDialog`, `totpSetup`, `recoveryDialog`; `:1952-1974` `servicesCard`; `:1978-2052` `logwatchCard`; `:2082-2102` `maintenanceCard`; `:1297-1327` Drivers and Security cards.
+- `pkgs/helios-ctl.py:4312-4442`: `account`, `account-password`, `account-2fa-begin`, `account-2fa-enable`, `account-2fa-disable`; `modules/airlock.nix:34-45` (Cockpit PAM with `pam_google_authenticator`).
 - `pkgs/services.json`: service catalog. `pkgs/helios-ctl.py:1517-1572`: `services`, `service-set`; `modules/options.nix:11-21` defaults.
 - `pkgs/helios-ctl.py:1069-1170`: reboot status, `maintenance-set`, `reboot`, `reboot-window`, `reboot-check`; `modules/recovery.nix:47-93`.
 - `pkgs/helios-ctl.py:1244-1510`: AI log triage commands; `pkgs/logwatch-models.json` (presets, defaults); `pkgs/logwatch.sh`; `modules/discovery.nix`.

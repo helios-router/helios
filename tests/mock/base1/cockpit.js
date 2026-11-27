@@ -34,6 +34,7 @@
   let svcOver = {}, svcOver0 = {};
   let restrictUnnamed = false, restrictUnnamed0 = false;
   let maint = { rebootWindow: { enabled: false, days: ["sun"], time: "04:00" } }, maint0 = JSON.parse(JSON.stringify(maint));
+  let account = { totp: false, pending: null };
   let lwState = {}, lwState0 = {}, lwFiles = { "model.gguf": 1107409472 }, lwDl = null,
     lwPaused = { since: T0 - 3600, until: T0 + 5 * 3600, reason: "CPU pressure 52%" };
   const svcOn = (id, over = svcOver) => (over[id] ?? SVC_DEFAULTS[id]);
@@ -722,6 +723,17 @@
         { kind: "flare", time: t - 86400 * 2, title: "helios: critical log events", message: "r8152 2-1:1.0 trunk0: USB disconnect, device number 3", priority: 5 },
       ] };
       case "backup": return { ok: true, changed: false, time: t, pushed: true };
+      case "account": return { ok: true, user: "admin", sshKeys: 1, passwordChanged: now0 - 86400 * 40, totp: account.totp, totpPending: !!account.pending };
+      case "account-password": { const pw = (stdin || "").replace(/[\r\n]+$/, "");
+        if (pw.length < 12 || pw.length > 128) return { ok: false, error: "Password must be 12 to 128 characters" };
+        return { ok: true, user: "admin" }; }
+      case "account-2fa-begin": account.pending = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+        return { ok: true, user: "admin", secret: account.pending, uri: `otpauth://totp/HeliOS%20%28helios%29:admin?secret=${account.pending}`,
+          qrSvg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21 21"><path d="M0 0h7v7H0zM14 0h7v7h-7zM0 14h7v7H0zM9 9h3v3H9z"/></svg>' };
+      case "account-2fa-enable": if (!account.pending) return { ok: false, error: "The setup expired: start again" };
+        if (!/^\d{6}$/.test((stdin || "").trim())) return { ok: false, error: "Enter the 6-digit code from the app" };
+        account = { totp: true, pending: null }; return { ok: true, user: "admin", recoveryCodes: ["40912377", "18350264", "77201946", "50388412", "93016655"] };
+      case "account-2fa-disable": account = { totp: false, pending: null }; return { ok: true, user: "admin" };
       default: return { ok: false, error: `mock: unknown command ${cmd}` };
     }
   }

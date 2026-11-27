@@ -1,0 +1,3 @@
+#!/bin/sh
+# chpasswd: records the user:password line it was given (stdin)
+echo "chpasswd $(cat)" >> "${STUB_LOG:-/dev/null}"
