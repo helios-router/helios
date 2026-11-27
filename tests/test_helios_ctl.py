@@ -1850,6 +1850,49 @@ class HeliosCtl(unittest.TestCase):
         self.assertFalse(self.gate_state()["certificate"]["tokenSet"])
 
 
+    def test_authelia_export_parser(self):
+        import importlib.util
+        saved = dict(os.environ)
+        os.environ["HELIOS_CONFIG"] = self.conf_path
+        try:
+            spec = importlib.util.spec_from_file_location("helios_ctl_mod", CTL)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+        sample = "\n".join([
+            "# yaml-language-server: $schema=https://www.authelia.com/schemas/v4.39/json-schema/exports.webauthn.json",
+            "webauthn_credentials:",
+            "  - id: 1",
+            "    created_at: 2026-11-27T10:00:00Z",
+            "    last_used_at: null",
+            "    username: admin",
+            "    description: 'pico-fido ''spare'' key'",
+            '    kid: "AbC_d-1"',
+            "    transports:",
+            "      - usb",
+            "      - nfc",
+            "    discoverable: true",
+            "    verified: false",
+            "  - id: 2",
+            "    username: other",
+            "    description: Pixel",
+            "    kid: Zz9",
+        ]) + "\n"
+        rows = mod.export_rows(sample)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["username"], "admin")
+        self.assertEqual(rows[0]["description"], "pico-fido 'spare' key")
+        self.assertEqual(rows[0]["kid"], "AbC_d-1")
+        self.assertIsNone(rows[0]["last_used_at"])
+        self.assertIs(rows[0]["discoverable"], True)
+        self.assertIs(rows[0]["verified"], False)
+        self.assertNotIn("transports", rows[0])   # nested values are skipped
+        self.assertEqual((rows[1]["username"], rows[1]["kid"]), ("other", "Zz9"))
+        self.assertEqual(mod.export_rows("totp_configurations: []\n"), [])
+
+
     def test_account_needs_admin_user(self):
         conf = load_json(self.conf_path)
         conf["admin"] = {"user": "../etc"}

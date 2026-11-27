@@ -24,8 +24,17 @@ def save():
 
 
 def export(key, rows):
+    """YAML, as Authelia 4.39 writes it whatever the file is called."""
+    lines = ["# yaml-language-server: $schema=https://www.authelia.com/schemas/v4.39/json-schema/exports.%s.json" % key, key + ":"]
+    for row in rows:
+        first = True
+        for k, v in row.items():
+            text = "null" if v is None else ("true" if v is True else "false" if v is False else "'%s'" % str(v).replace("'", "''"))
+            lines.append(("  - " if first else "    ") + "%s: %s" % (k, text))
+            first = False
+        lines += ["    transports:", "      - usb"] if key.startswith("webauthn") else []
     with open(a[a.index("--file") + 1], "w") as f:
-        json.dump({key: rows}, f)
+        f.write("\n".join(lines) + "\n")
 
 
 # A fixed, public test value (the RFC 6238 example key), not a real credential

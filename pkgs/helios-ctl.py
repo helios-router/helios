@@ -4576,22 +4576,60 @@ def authelia_cli(*args):
     env = dict(os.environ, AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE=GATE["storageKeyFile"])
     r = run([GATE["authelia"], *args, "--config", GATE["cliConfig"]], env=env, timeout=60)
     if r.returncode != 0:
-        raise RuntimeError(f"authelia {' '.join(args[:4])}: {(r.stderr or r.stdout).strip()[-300:]}")
+        text = (r.stderr or "") + "\n" + (r.stdout or "")
+        # Authelia prints "Error: …" and then its usage text: report the error
+        err = next((ln.strip() for ln in text.splitlines() if ln.strip().startswith("Error")), text.strip()[:300])
+        raise RuntimeError(f"authelia {' '.join(args[:4])}: {err[:300]}")
     return r.stdout
 
 
+def export_rows(text):
+    """The entries of an Authelia storage export (YAML: one key holding a list of
+    flat mappings). Only top-level scalar fields are kept; nested values (lists,
+    mappings) are skipped. Enough for usernames, key IDs, descriptions and dates,
+    without a YAML library."""
+    rows, row, key_indent = [], None, None
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        m = re.match(r"^(\s*)- ([A-Za-z_][A-Za-z0-9_]*):(?:\s+(.*))?$", raw)
+        if m:
+            row = {}
+            rows.append(row)
+            key_indent = len(m.group(1)) + 2
+            name, value = m.group(2), m.group(3)
+        else:
+            m = re.match(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*):(?:\s+(.*))?$", raw)
+            if row is None or not m or len(m.group(1)) != key_indent:
+                continue   # the top-level key, or a nested value
+            name, value = m.group(2), m.group(3)
+        if value is None:
+            continue   # "key:" with the value on the lines below: nested, skipped
+        row[name] = yaml_scalar(value)
+    return rows
+
+
+def yaml_scalar(value):
+    if value is None or value in ("", "~", "null"):
+        return None
+    if value in ("true", "false"):
+        return value == "true"
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        inner = value[1:-1]
+        return inner.replace("''", "'") if value[0] == "'" else inner.replace('\\"', '"').replace("\\\\", "\\")
+    return value
+
+
 def authelia_export(kind):
-    """Rows of `authelia storage user <kind> export` (as JSON), from a private
-    temp folder that's removed straight away (a TOTP export holds the secrets)."""
+    """Rows of `authelia storage user <kind> export` (YAML), from a private temp
+    folder that's removed straight away (a TOTP export holds the secrets)."""
     d = tempfile.mkdtemp(prefix="helios-gate-")
     try:
-        f = os.path.join(d, "export.json")
+        f = os.path.join(d, "export.yml")
         authelia_cli("storage", "user", kind, "export", "--file", f)
-        data = read_json(f, {}) or {}
+        return export_rows(read_plain(f))
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    rows = next((v for v in data.values() if isinstance(v, list)), []) if isinstance(data, dict) else data
-    return [r for r in rows if isinstance(r, dict)]
 
 
 def gate_passkeys(user):
