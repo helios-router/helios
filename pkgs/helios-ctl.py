@@ -4614,10 +4614,33 @@ def gate_require_password(user, d):
         fail("The current password is wrong")
 
 
+def gate_certificate():
+    """Which certificate the sign-in page has: Let's Encrypt for the owner's domain
+    (when issued and not expired), else the router's own."""
+    domain = GATE.get("ownDomain")
+    info = {"domain": domain, "provider": GATE.get("dnsProvider") if domain else None,
+            "tokenSet": bool(domain) and read_plain(GATE.get("tlsMode") or "").strip() == "acme",
+            "issuer": "router", "expires": None}
+    pem = GATE.get("acmeCert")
+    if domain and pem and os.path.exists(pem):
+        r = run(["openssl", "x509", "-noout", "-enddate", "-in", pem])
+        m = re.search(r"notAfter=(.+)", r.stdout or "")
+        if m:
+            try:
+                exp = dt.datetime.strptime(m.group(1).strip(), "%b %d %H:%M:%S %Y %Z").replace(tzinfo=dt.timezone.utc)
+                info["expires"] = int(exp.timestamp())
+                if info["expires"] > now():
+                    info["issuer"] = "letsencrypt"
+            except ValueError:
+                pass   # unreadable date: report the router's own certificate
+    return info
+
+
 def cmd_gate(a):
     user = admin_user()
     base = {"ok": True, "enabled": bool(GATE.get("enabled")), "url": GATE.get("url"), "fqdn": GATE.get("fqdn"),
-            "rescue": bool(GATE.get("rescue")), "legacyTotp": os.path.exists(totp_file(user))}
+            "rescue": bool(GATE.get("rescue")), "legacyTotp": os.path.exists(totp_file(user)),
+            "certificate": gate_certificate()}
     if not GATE.get("enabled"):
         return out({**base, "enforced": False, "synced": False, "passkeys": [], "totp": False})
     try:
@@ -4659,6 +4682,69 @@ def cmd_gate_ca(a):
     if "BEGIN CERTIFICATE" not in pem:
         fail("The router's certificate isn't made yet: open the sign-in page once, then try again")
     out({"ok": True, "pem": pem, "filename": f"helios-{CFG.get('hostName', 'router')}-ca.crt"})
+
+
+DNS_TOKEN_RE = re.compile(r"[A-Za-z0-9._~-]{16,200}")
+
+
+def gate_tls_mode(mode):
+    """Point Caddy's own-domain certificate config at the router's own CA
+    ("internal") or Let's Encrypt with that as fallback ("acme")."""
+    target = GATE["tlsAcme"] if mode == "acme" else GATE["tlsInternal"]
+    link = GATE["tlsLink"]
+    tmp = f"{link}.{os.getpid()}.tmp"
+    os.symlink(target, tmp)
+    os.replace(tmp, link)
+    write_private(GATE["tlsMode"], mode + "\n", 0o644)
+
+
+def caddy_restart():
+    """Restart Caddy; True if it's running afterwards."""
+    if os.environ.get("HELIOS_NO_SYSTEMD"):
+        return True
+    run(["systemctl", "restart", "caddy.service"], timeout=60)
+    for _ in range(20):
+        if run(["systemctl", "is-active", "--quiet", "caddy.service"]).returncode == 0:
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def cmd_gate_dns_token(a):
+    """stdin {"current", "token"}: the DNS provider's API token for the own-domain
+    certificate (empty = remove it). It goes to systemd-creds on stdin and is kept
+    encrypted (host key); Caddy gets it as a credential. Never logged, never in git.
+    If Caddy won't start with it, the router's own certificate is put back."""
+    gate_on()
+    user = admin_user()
+    if not GATE.get("ownDomain"):
+        fail("No own domain set: helios.gate.domain in site.nix")
+    d = stdin_json()
+    gate_require_password(user, d)
+    token = str(d.get("token") or "").strip()
+    if token and not DNS_TOKEN_RE.fullmatch(token):
+        fail("That doesn't look like an API token (letters, digits, - _ . ~ only)")
+    cred = GATE["dnsCred"]
+    tmp = f"{cred}.{os.getpid()}.tmp"
+    r = run(["systemd-creds", "encrypt", "--with-key=host", f"--name={GATE['credName']}", "-", tmp], input=token)
+    if r.returncode != 0:
+        try:
+            os.remove(tmp)
+        except FileNotFoundError:
+            pass   # nothing was written
+        fail(f"Couldn't store the token: {(r.stderr or r.stdout).strip()[-200:]}")
+    os.chmod(tmp, 0o400)
+    os.replace(tmp, cred)
+    gate_tls_mode("acme" if token else "internal")
+    if caddy_restart():
+        return out({"ok": True, "tokenSet": bool(token)})
+    # The plugin refused the token (or Caddy failed otherwise): back to the router's own
+    gate_tls_mode("internal")
+    caddy_restart()
+    log = run(["journalctl", "-u", "caddy.service", "-n", "5", "--no-pager", "-o", "cat"]).stdout.strip()
+    if token:
+        log = log.replace(token, "[token]")   # some plugins quote the token they reject
+    fail(f"Caddy wouldn't start with that token, so the router's own certificate is back in use. {log[-300:]}")
 
 
 def cmd_gate_totp_begin(a):
@@ -4771,7 +4857,7 @@ def cmd_gate_off(a):
 
 
 # ------------------------------------------------------------------ main
-NO_GIT = {"gate", "gate-sync", "gate-code", "gate-ca", "gate-totp-begin", "gate-totp-check", "gate-totp-remove", "gate-passkey-remove", "gate-enforce", "gate-off", "account", "account-password", "account-2fa-begin", "account-2fa-enable", "account-2fa-disable", "detect", "reboot-status", "reboot", "reboot-window", "reboot-check", "unit-failed", "recover", "logwatch", "logwatch-model-get", "logwatch-model-fetch", "logwatch-model-remove", "logwatch-guard", "logwatch-resume", "services", "printing", "printer-models", "printer-test", "printer-pause", "print-cancel", "upnp-close", "qos-suggest", "remote-wg-rotate", "remote-wg-import", "ups-event", "ups-forward", "vulnix-report", "notify-setup", "notify-credentials", "notify-info", "notify-test", "notify-recent", "uplink-check", "counters", "vnstat", "qos", "upnp-clear"}
+NO_GIT = {"gate-dns-token", "gate", "gate-sync", "gate-code", "gate-ca", "gate-totp-begin", "gate-totp-check", "gate-totp-remove", "gate-passkey-remove", "gate-enforce", "gate-off", "account", "account-password", "account-2fa-begin", "account-2fa-enable", "account-2fa-disable", "detect", "reboot-status", "reboot", "reboot-window", "reboot-check", "unit-failed", "recover", "logwatch", "logwatch-model-get", "logwatch-model-fetch", "logwatch-model-remove", "logwatch-guard", "logwatch-resume", "services", "printing", "printer-models", "printer-test", "printer-pause", "print-cancel", "upnp-close", "qos-suggest", "remote-wg-rotate", "remote-wg-import", "ups-event", "ups-forward", "vulnix-report", "notify-setup", "notify-credentials", "notify-info", "notify-test", "notify-recent", "uplink-check", "counters", "vnstat", "qos", "upnp-clear"}
 
 
 def main():
@@ -4947,7 +5033,7 @@ def main():
                    ("gate", cmd_gate), ("gate-sync", cmd_gate_sync), ("gate-code", cmd_gate_code), ("gate-ca", cmd_gate_ca),
                    ("gate-totp-begin", cmd_gate_totp_begin), ("gate-totp-check", cmd_gate_totp_check),
                    ("gate-totp-remove", cmd_gate_totp_remove), ("gate-passkey-remove", cmd_gate_passkey_remove),
-                   ("gate-enforce", cmd_gate_enforce), ("gate-off", cmd_gate_off)):
+                   ("gate-enforce", cmd_gate_enforce), ("gate-off", cmd_gate_off), ("gate-dns-token", cmd_gate_dns_token)):
         sub.add_parser(nm).set_defaults(fn=fn)
     x = sub.add_parser("vulnix-report")
     x.add_argument("file")

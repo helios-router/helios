@@ -78,6 +78,9 @@ Everything is declared in `modules/options.nix`. [How It Works](How-It-Works) ex
 | Option | Default | Meaning |
 |---|---|---|
 | `helios.logwatch.enable` | `false` | Default for the AI log triage service. |
+| `helios.gate.domain` | `null` | A name of your own for the sign-in page (e.g. `helios.example.com`, or a free `yourname.dedyn.io`): the router gets a Let's Encrypt certificate for it through a DNS record, so browsers trust it with nothing to install. The provider's API token is set in Photosphere and stays on the router. `null` = `<hostName>.<domain>` with the router's own certificate. |
+| `helios.gate.acme.dnsProvider` | `"cloudflare"` | Where that domain's DNS is: `cloudflare` or `desec`. |
+| `helios.gate.acme.email` | `null` | Optional Let's Encrypt account e-mail. |
 | `helios.gate.enable` | `false` | Default for the Passkey sign-in service: an Authelia sign-in gate (behind Caddy) in front of Cockpit. Passkeys are the preferred second factor, a code the fallback. Set it up in Photosphere → Advanced → Admin account; see [Advanced](Page-Advanced#passkey-sign-in-card). |
 | `helios.logwatch.model` | `"/var/lib/llm/model.gguf"` | Model file used when Photosphere's model is "site". |
 | `helios.logwatch.backend` | `"vulkan"` | `vulkan` (iGPU), `cpu`, or `remote` (an existing llama.cpp server). Used when Photosphere's backend is "site". |

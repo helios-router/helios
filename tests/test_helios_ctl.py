@@ -129,7 +129,11 @@ class HeliosCtl(unittest.TestCase):
                         "gateDir": os.path.join(self.tmp, "gate"), "usersFile": os.path.join(gate, "users.yml"),
                         "storageKeyFile": os.path.join(gate, "key"), "authelia": os.path.join(STUBS, "authelia"),
                         "cliConfig": "/dev/null", "notifications": os.path.join(gate, "notifications.txt"),
-                        "caCert": os.path.join(gate, "root.crt"), "autheliaVersion": "4.39.28"}
+                        "caCert": os.path.join(gate, "root.crt"), "autheliaVersion": "4.39.28",
+                        "ownDomain": None, "dnsProvider": "cloudflare", "credName": "helios-dns-token",
+                        "dnsCred": os.path.join(self.tmp, "gate", "dns-token.cred"), "tlsLink": os.path.join(self.tmp, "gate", "tls.caddy"),
+                        "tlsMode": os.path.join(self.tmp, "gate", "tls-mode"), "tlsInternal": os.path.join(gate, "tls-internal.caddy"),
+                        "tlsAcme": os.path.join(gate, "tls-acme.caddy"), "acmeCert": os.path.join(gate, "le.crt")}
         self.conf_path = os.path.join(self.tmp, "config.json")
         write_json(self.conf_path, conf)
         with open(os.path.join(self.cfg, "configuration.nix"), "w") as f:
@@ -1807,6 +1811,43 @@ class HeliosCtl(unittest.TestCase):
         r = self.helios("gate-ca")
         self.assertIn("BEGIN CERTIFICATE", r["pem"])
         self.assertTrue(r["filename"].endswith(".crt"))
+
+
+    def test_gate_own_domain_token_and_certificate(self):
+        self.set_shadow("old-password-123")
+        pw = {"current": "old-password-123"}
+        fake = "fake-dns-token-for-tests-only-000000"   # not a real token format, so secret scanning leaves it alone
+        self.assertIn("helios.gate.domain", self.helios("gate-dns-token", stdin=json.dumps({**pw, "token": fake}), ok=False)["error"])
+        self.assertEqual(self.gate_state()["certificate"]["issuer"], "router")
+        self.gate_conf(ownDomain="helios.example.com", dnsProvider="desec")
+        cert = self.gate_state()["certificate"]
+        self.assertEqual((cert["domain"], cert["provider"], cert["tokenSet"], cert["issuer"]), ("helios.example.com", "desec", False, "router"))
+        self.assertIn("wrong", self.helios("gate-dns-token", stdin=json.dumps({"current": "x", "token": fake}), ok=False)["error"])
+        for bad in ("short", "has space in it 1234567", "semi;colon-0123456789abcdef"):
+            self.assertFalse(self.helios("gate-dns-token", stdin=json.dumps({**pw, "token": bad}), ok=False)["ok"], bad)
+        os.makedirs(os.path.join(self.tmp, "gate"), exist_ok=True)
+        self.helios("gate-dns-token", stdin=json.dumps({**pw, "token": fake}))
+        cred = os.path.join(self.tmp, "gate", "dns-token.cred")
+        self.assertEqual(read_file(cred), f"ENC(helios-dns-token):{fake}")   # only ever handed to systemd-creds
+        self.assertEqual(os.stat(cred).st_mode & 0o777, 0o400)
+        self.assertNotIn(fake, self.stub_log())                                # never on a command line
+        self.assertEqual(os.readlink(os.path.join(self.tmp, "gate", "tls.caddy")), os.path.join(self.tmp, "authelia", "tls-acme.caddy"))
+        self.assertTrue(self.gate_state()["certificate"]["tokenSet"])
+        r = subprocess.run([sys.executable, CTL, "gate"], capture_output=True, text=True, env=self.env)
+        self.assertNotIn(fake, r.stdout + r.stderr)   # the token is never echoed back
+        # A Let's Encrypt certificate Caddy got (made here with openssl)
+        le = os.path.join(self.tmp, "authelia", "le.crt")
+        os.makedirs(os.path.dirname(le), exist_ok=True)
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", os.devnull, "-out", le,
+                        "-days", "60", "-subj", "/CN=helios.example.com"], check=True, capture_output=True)
+        cert = self.gate_state()["certificate"]
+        self.assertEqual(cert["issuer"], "letsencrypt")
+        self.assertGreater(cert["expires"], time.time() + 50 * 86400)
+        # Clearing the token
+        self.helios("gate-dns-token", stdin=json.dumps({**pw, "token": ""}))
+        self.assertEqual(read_file(cred), "ENC(helios-dns-token):")
+        self.assertEqual(os.readlink(os.path.join(self.tmp, "gate", "tls.caddy")), os.path.join(self.tmp, "authelia", "tls-internal.caddy"))
+        self.assertFalse(self.gate_state()["certificate"]["tokenSet"])
 
 
     def test_account_needs_admin_user(self):

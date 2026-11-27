@@ -32,7 +32,46 @@
 let
   cfg = config.helios;
   I = cfg.internal;
-  fqdn = "${cfg.hostName}.${cfg.domain}";
+  localName = "${cfg.hostName}.${cfg.domain}";
+  # The sign-in page's name: the owner's own domain if set (a Let's Encrypt
+  # certificate, nothing to install), else <hostName>.<domain>
+  ownDomain = cfg.gate.domain;
+  fqdn = if ownDomain != null then ownDomain else localName;
+  dnsProvider = cfg.gate.acme.dnsProvider;
+  caddyPackage = if ownDomain != null then pkgs.callPackage ../pkgs/caddy-dns.nix { provider = dnsProvider; } else pkgs.caddy;
+  # The DNS provider's API token: set in Photosphere, kept encrypted with
+  # systemd-creds (host key), handed to Caddy as a credential
+  credName = "helios-dns-token";
+  dnsCred = "${gateDir}/dns-token.cred";
+  tokenFile = "/run/credentials/caddy.service/${credName}";
+  # How each provider's Caddy plugin takes the token
+  dnsDirective = {
+    cloudflare = "dns cloudflare {file.${tokenFile}}";
+    desec = "dns desec {\n      token {file.${tokenFile}}\n    }";
+  }.${dnsProvider};
+  # deSEC's two nameservers can be minutes apart, and Let's Encrypt checks both:
+  # wait before asking it to look (caddy-dns/desec issue #14; deSEC forum)
+  dnsWait = {
+    cloudflare = "";
+    desec = "propagation_delay 3m\n    propagation_timeout 5m";
+  }.${dnsProvider};
+  # The own-domain site's certificate, switched at runtime by helios-ctl: the
+  # router's own until a token is set (the DNS plugins refuse an empty one, and
+  # Caddy wouldn't start), then Let's Encrypt with the router's own as fallback
+  tlsInternal = pkgs.writeText "gate-tls-internal.caddy" "tls internal\n";
+  tlsAcme = pkgs.writeText "gate-tls-acme.caddy" ''
+    tls {
+      issuer acme {
+        ${dnsDirective}
+        # Check the record on public DNS: the router answers this name itself
+        resolvers 1.1.1.1 1.0.0.1
+        ${dnsWait}
+      }
+      issuer internal
+    }
+  '';
+  tlsLink = "${gateDir}/tls.caddy";
+  tlsMode = "${gateDir}/tls-mode";       # "acme" once a token is set
   port = 9090;
   cockpitPort = 9089;     # localhost only, behind Caddy
   autheliaPort = 9091;    # localhost only
@@ -64,6 +103,15 @@ let
     umask 077
     install -d -m 0700 -o ${user} -g ${user} ${stateDir} ${stateDir}/secrets
     install -d -m 0750 -o root -g caddy ${gateDir}
+    ${lib.optionalString (ownDomain != null) ''
+    # Own domain: an (empty) encrypted token until one is set, and the matching
+    # certificate config for Caddy to import
+    if [ ! -s ${dnsCred} ]; then
+      printf "" | ${config.systemd.package}/bin/systemd-creds encrypt --with-key=host --name=${credName} - ${dnsCred}
+      chmod 0400 ${dnsCred}
+    fi
+    if [ "$(cat ${tlsMode} 2>/dev/null)" = acme ]; then ln -sfn ${tlsAcme} ${tlsLink}; else ln -sfn ${tlsInternal} ${tlsLink}; fi
+    ''}
     for s in jwt session storage; do
       f=${stateDir}/secrets/$s
       [ -s "$f" ] || ${pkgs.openssl}/bin/openssl rand -hex 48 > "$f"
@@ -95,6 +143,13 @@ in
     usersFile = "${stateDir}/users.yml";
     notifications = "${stateDir}/notifications.txt";
     caCert = "/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt";
+    # Own domain (helios.gate.domain): where the token goes and where Caddy keeps
+    # the Let's Encrypt certificate
+    inherit ownDomain dnsProvider dnsCred credName tlsLink tlsMode;
+    tlsInternal = if I.on "gate" then "${tlsInternal}" else null;
+    tlsAcme = if ownDomain == null then null else "${tlsAcme}";
+    acmeCert = if ownDomain == null then null
+      else "/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${ownDomain}/${ownDomain}.crt";
   };
 } (lib.mkIf (I.on "gate") {
   warnings = lib.optional (!lib.versionAtLeast authelia.version autheliaSecure)
@@ -163,7 +218,10 @@ in
 
   # ---------------------------------------------------------------- Cockpit behind Caddy
   systemd.sockets.cockpit.listenStreams = lib.mkForce [ "" "127.0.0.1:${toString cockpitPort}" ];
-  services.cockpit.allowed-origins = lib.optional rescue "https://${cfg.interfaces.rescueAddress}:${toString port}";
+  services.cockpit.allowed-origins = lib.optional rescue "https://${cfg.interfaces.rescueAddress}:${toString port}"
+    ++ lib.optional (ownDomain != null) "https://${ownDomain}:${toString port}";
+  # The router answers its own domain on every network (AdGuard reads /etc/hosts)
+  networking.hosts = lib.mkIf (ownDomain != null) { ${I.adminGw} = [ ownDomain ]; };
   services.cockpit.settings.WebService = {
     AllowUnencrypted = true;              # plain HTTP on localhost; Caddy does TLS
     ProtocolHeader = "X-Forwarded-Proto";
@@ -174,6 +232,7 @@ in
 
   services.caddy = {
     enable = true;
+    package = caddyPackage;
     # No admin API: on localhost it would let any local user rewrite the gate.
     # Config changes restart Caddy instead of reloading it.
     enableReload = false;
@@ -182,57 +241,74 @@ in
       auto_https disable_redirects
       skip_install_trust
       default_sni ${fqdn}
+      ${lib.optionalString (cfg.gate.acme.email != null) "email ${cfg.gate.acme.email}"}
     '';
-    virtualHosts."https://${fqdn}:${toString port}, https://${cfg.hostName}:${toString port}, https://${I.adminGw}:${toString port}${lib.optionalString rescue ", https://${cfg.interfaces.rescueAddress}:${toString port}"}".extraConfig = ''
-      tls internal
-      encode zstd gzip
-
-      # In this order (a route keeps it): the first matching handle wins
-      route {
-        ${lib.optionalString rescue ''
-        # Rescue port: no gate, admin password only. Matched on the client's address
-        # (the firewall only lets the rescue subnet in on rescue0), never the Host header.
-        @rescue remote_ip ${rescueNet}
-        handle @rescue {
-          reverse_proxy 127.0.0.1:${toString cockpitPort}
-        }
-        ''}
-        # The gate's own pages
-        handle /auth* {
-          reverse_proxy 127.0.0.1:${toString autheliaPort}
-        }
-        # Two-factor sign-in on (Photosphere writes the flag): passkeys and the
-        # session cookie need the router's full name, so other names redirect to it
-        @othername {
-          file {
+    # The same routes for every name the router answers on
+    extraConfig = ''
+      (gate_routes) {
+        encode zstd gzip
+        # In this order (a route keeps it): the first matching handle wins
+        route {
+          ${lib.optionalString rescue ''
+          # Rescue port: no gate, admin password only. Matched on the client's address
+          # (the firewall only lets the rescue subnet in on rescue0), never the Host header.
+          @rescue remote_ip ${rescueNet}
+          handle @rescue {
+            reverse_proxy 127.0.0.1:${toString cockpitPort}
+          }
+          ''}
+          # The gate's own pages
+          handle /auth* {
+            reverse_proxy 127.0.0.1:${toString autheliaPort}
+          }
+          # Two-factor sign-in on (Photosphere writes the flag): passkeys and the
+          # session cookie need the sign-in page's name, so other names redirect to it
+          @othername {
+            file {
+              root ${gateDir}
+              try_files enforced
+            }
+            not host ${fqdn}
+          }
+          handle @othername {
+            redir https://${fqdn}:${toString port}{uri} 302
+          }
+          @enforced file {
             root ${gateDir}
             try_files enforced
           }
-          not host ${fqdn}
-        }
-        handle @othername {
-          redir https://${fqdn}:${toString port}{uri} 302
-        }
-        @enforced file {
-          root ${gateDir}
-          try_files enforced
-        }
-        handle @enforced {
-          forward_auth 127.0.0.1:${toString autheliaPort} {
-            uri /auth/api/authz/forward-auth
-            copy_headers Remote-User
+          handle @enforced {
+            forward_auth 127.0.0.1:${toString autheliaPort} {
+              uri /auth/api/authz/forward-auth
+              copy_headers Remote-User
+            }
+            reverse_proxy 127.0.0.1:${toString cockpitPort}
           }
-          reverse_proxy 127.0.0.1:${toString cockpitPort}
-        }
-        handle {
-          reverse_proxy 127.0.0.1:${toString cockpitPort}
+          handle {
+            reverse_proxy 127.0.0.1:${toString cockpitPort}
+          }
         }
       }
     '';
+    virtualHosts = {
+      # The router's own names and addresses: its own certificate authority
+      "https://${localName}:${toString port}, https://${cfg.hostName}:${toString port}, https://${I.adminGw}:${toString port}${lib.optionalString rescue ", https://${cfg.interfaces.rescueAddress}:${toString port}"}".extraConfig = ''
+        tls internal
+        import gate_routes
+      '';
+    } // lib.optionalAttrs (ownDomain != null) {
+      # The owner's domain: Let's Encrypt through a DNS record at the provider
+      # (nothing exposed); while that fails, the router's own certificate
+      "https://${ownDomain}:${toString port}".extraConfig = ''
+        import ${tlsLink}
+        import gate_routes
+      '';
+    };
   };
   systemd.services.caddy = {
     after = [ "helios-gate-init.service" ];
     wants = [ "helios-gate-init.service" ];
+    serviceConfig.LoadCredentialEncrypted = lib.mkIf (ownDomain != null) [ "${credName}:${dnsCred}" ];
   };
 }) ];
 }

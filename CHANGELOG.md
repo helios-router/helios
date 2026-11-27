@@ -30,6 +30,10 @@ track `main` through the flake, and the commit hash is the version.
   the rescue port skips it. Set up in Photosphere → Advanced; the installer
   offers it and recommends passkeys. Authelia comes from a pinned
   `nixpkgs-unstable` flake input while stable lacks a security fix.
+  Optionally the sign-in page gets its own name (`helios.gate.domain`) and a
+  Let's Encrypt certificate through Cloudflare or deSEC DNS, so passkeys work
+  without installing the router's certificate; the router's own certificate
+  stays as the fallback.
 - Admin account card (Photosphere → Advanced): change the admin password and turn on
   two-factor sign-in (TOTP) for Cockpit, with one-use recovery codes. Changes
   need the current password or code. The hardening VM test signs in through

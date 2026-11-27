@@ -399,3 +399,5 @@ th.pause-col, td.pause-col { width: 1%; padding-right: 0; }
 .gate-step-body { margin: 4px 0 0 22px; }
 .gate-step-body p { margin: 2px 0 8px; }
 .gate-step-body .list { margin-bottom: 8px; }
+.steps { margin: 6px 0 10px; padding-left: 22px; }
+.steps > li { margin: 0 0 10px; }

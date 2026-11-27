@@ -68,7 +68,15 @@
       # `nix flake check`: the template evaluates and its firewall/system builds
       checks.${system} = {
         example = example.config.system.build.toplevel;
+        # The same site with passkey sign-in on and its own domain: builds Authelia
+        # (from the unstable pin) and Caddy with a DNS plugin (Cloudflare, the default)
+        example-gate = (example.extendModules {
+          modules = [ { helios.gate.enable = lib.mkForce true; helios.gate.domain = "helios.example.com"; } ];
+        }).config.system.build.toplevel;
         installer = installer-check.config.system.build.toplevel;
+        # Caddy with each DNS plugin the gate's own-domain certificate can use
+        caddy-cloudflare = nixpkgs.legacyPackages.${system}.callPackage ./pkgs/caddy-dns.nix { provider = "cloudflare"; };
+        caddy-desec = nixpkgs.legacyPackages.${system}.callPackage ./pkgs/caddy-dns.nix { provider = "desec"; };
       };
     };
 }

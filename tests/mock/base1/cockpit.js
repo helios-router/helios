@@ -742,13 +742,15 @@
         const enabled = svcOn("gate");
         return { ok: true, enabled, url: "https://helios.home.arpa:9090", fqdn: "helios.home.arpa", rescue: true, legacyTotp: account.totp,
           enforced: enabled && gate.enforced, synced: enabled && gate.synced, passkeys: enabled ? gate.passkeys : [], totp: enabled && gate.totp,
-          error: null, autheliaVersion: "4.39.28", ca: true };
+          error: null, autheliaVersion: "4.39.28", ca: true,
+          certificate: { domain: null, provider: null, tokenSet: false, issuer: "router", expires: null } };
       }
       case "gate-sync": { const d = JSON.parse(stdin || "{}"); if (!d.current) return { ok: false, error: "The current password is wrong" };
         gate.synced = true;
         // the demo has no browser key ceremony: pretend one was registered later
         setTimeout(() => { if (!gate.passkeys.length) gate.passkeys = [{ kid: "demo1", description: "pico-fido", created: new Date().toISOString(), lastUsed: null, discoverable: true, verified: true }]; }, 4000);
         return { ok: true, user: "admin" }; }
+      case "gate-dns-token": return { ok: false, error: "No own domain set: helios.gate.domain in site.nix" };
       case "gate-code": return { ok: true, code: "7XKQ2M9P", sent: new Date().toISOString().slice(0, 19).replace("T", " "), text: null };
       case "gate-ca": return { ok: true, pem: "-----BEGIN CERTIFICATE-----\nDEMO\n-----END CERTIFICATE-----\n", filename: "helios-demo-ca.crt" };
       case "gate-totp-begin": { const d = JSON.parse(stdin || "{}"); if (!d.current) return { ok: false, error: "The current password is wrong" };

@@ -45,6 +45,7 @@ Supporting modules: `lagrange.nix` (VLANs, mDNS, NTP), `galileo.nix` (Galileo: D
 | [How It Works](How-It-Works) | understand the architecture: files, modules, networks and roles, the apply and rollback flow |
 | [Configuration](Configuration) | look up every `helios.*` option, every `state.json` key and every catalog file |
 | [Installation](Installation) | install from the ISO or by hand, set up the switch, first boot, Headscale |
+| [Passkey Sign-In](Passkey-Sign-In) | the optional sign-in page: passkeys (recommended) or a code on top of the admin password, certificates, setup, lockouts |
 | [Updates and Security](Updates-and-Security) | update a router; understand CI, the PR guard and vulnerability reporting |
 | [Development](Development) | work on the repository: layout, tests, demo, adding drivers, profiles and services |
 

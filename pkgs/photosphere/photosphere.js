@@ -2266,13 +2266,17 @@ function gateStep(done, title, ...body) {
     statusEl(done ? "ok" : "warn", title), h("div", { class: "gate-step-body" }, body));
 }
 
-function passkeyCard(g, reload) {
+const GATE_GUIDE = "https://github.com/helios-router/helios/wiki/Passkey-Sign-In";
+const guideLink = text => h("a", { href: GATE_GUIDE, target: "_blank", rel: "noopener noreferrer" }, text);
+
+function passkeyCard(g, reload, user) {
   const err = hwErr();
   const show = e => hwShowErr(err, e);
   if (!g.enabled) {
     return card("Passkey sign-in", h("span", { class: "muted small" }, "Off"),
       h("div", { class: "alert alert-info small" }, PASSKEY_WHY),
-      h("p", {}, "Adds a sign-in page in front of these pages. Optional: it downloads Authelia (about 50 MB) at the next Apply; then set it up here."),
+      h("p", {}, "Adds a sign-in page in front of these pages. Optional: it downloads Authelia (about 50 MB) at the next Apply; then set it up here, step by step."),
+      h("p", { class: "muted small" }, h("strong", {}, "You'll need: "), "a FIDO2 security key with a PIN (YubiKey, pico-fido, Nitrokey…) or a phone that does passkeys, and about 10 minutes. ", guideLink("Read the full guide")),
       err,
       h("div", { class: "card-actions" }, h("button", { class: "btn btn-primary btn-sm", onclick: () =>
         api("service-set", "gate", "on").then(() => { toast("Passkey sign-in turned on — apply to download and start it"); refreshPending(); reload(); }).catch(show) },
@@ -2285,6 +2289,7 @@ function passkeyCard(g, reload) {
   return card("Passkey sign-in",
     g.enforced ? statusEl("ok", "Required at sign-in") : statusEl("warn", "Set up, not required yet"),
     h("div", { class: "alert alert-info small" }, PASSKEY_WHY),
+    h("p", { class: "muted small" }, "Work through the steps in order; each turns green when it's done. ", guideLink("Full guide, with screenshots of each step and what to do if something goes wrong.")),
     g.error ? h("div", { class: "alert alert-warn small" }, `The sign-in service isn't answering yet (${g.error}). If you just applied, give it a minute.`) : null,
     err,
     h("ol", { class: "gate-steps" },
@@ -2292,9 +2297,7 @@ function passkeyCard(g, reload) {
         h("p", { class: "muted small" }, "The sign-in page uses the same admin password as Cockpit. Copy it there once; changing the password here keeps both in step."),
         g.synced ? null : h("button", { class: "btn btn-secondary btn-sm", onclick: () =>
           pwAct("Copy the admin password to the sign-in page", "Enter the current admin password.", "Copy", "gate-sync", {}, () => toast("Password copied to the sign-in page")) }, "Copy password")),
-      gateStep(!!g.ca, "Your browser trusts the router",
-        h("p", { class: "muted small" }, "Browsers only allow passkeys on pages with a trusted certificate. Download the router's certificate and install it as a trusted authority, once per device (on a phone: Settings → Security → install a certificate)."),
-        h("button", { class: "btn btn-secondary btn-sm", onclick: () => api("gate-ca").then(r => downloadText(r.pem, r.filename)).catch(show) }, "Download certificate")),
+      certStep(g, reload, show),
       gateStep(keys.length > 0, `Passkeys (${keys.length}) — recommended`,
         keys.length ? h("ul", { class: "list" }, keys.map(k => h("li", {},
           h("span", {}, k.description, k.discoverable ? null : h("span", { class: "muted small" }, " (not stored on the key)")),
@@ -2302,13 +2305,17 @@ function passkeyCard(g, reload) {
           h("button", { class: "btn btn-link btn-sm", onclick: () => pwAct(`Remove "${k.description}"?`, "It won't open the sign-in page any more.", "Remove", "gate-passkey-remove", { kid: k.kid }, () => toast("Passkey removed"), true) }, "Remove"))))
           : h("p", { class: "muted small" }, "None yet. Register at least two if you can (a spare key, or your phone), so losing one isn't a problem."),
         h("button", { class: "btn btn-primary btn-sm", disabled: !g.synced, title: g.synced ? null : "Copy the password first",
-          onclick: () => addPasskeyDialog(gatePage, reload) }, "Add passkey")),
+          onclick: () => addPasskeyDialog(gatePage, reload, user) }, "Add passkey")),
       gateStep(!!g.totp, "Code from an app — fallback",
         h("p", { class: "muted small" }, "For when you don't have a passkey to hand. With a code you type the admin password twice: at the gate and in Cockpit."),
         g.totp
           ? h("button", { class: "btn btn-link btn-sm", onclick: () => pwAct("Remove the code?", "The gate will only take passkeys.", "Remove", "gate-totp-remove", {}, () => toast("Code removed"), true) }, "Remove code")
           : h("button", { class: "btn btn-secondary btn-sm", disabled: !g.synced, onclick: () => askPassword({ title: "Set up a code (fallback)", intro: "Enter the current admin password.", okLabel: "Next",
               submit: pw => apiInput(JSON.stringify({ current: pw }), "gate-totp-begin").then(b => gateTotpDialog(b, reload)) }) }, "Set up code")),
+      gateStep(g.enforced, "Try it",
+        h("p", { class: "muted small" }, "Before requiring it, check your passkey works: open the ",
+          h("a", { href: gatePage, target: "_blank", rel: "noopener noreferrer" }, "sign-in page"),
+          " in a private window, choose “Sign in with a passkey”, enter the key's PIN and touch it. If you land on a “signed in” page, you're ready.")),
       gateStep(g.enforced, "Require it at sign-in",
         h("p", { class: "muted small" }, `Then sign in at ${g.url} (other addresses go there).`, g.rescue ? " The rescue port skips it: admin password only." : "",
           g.legacyTotp ? " The code Cockpit asks for now is retired at the same time; the gate takes over." : ""),
@@ -2320,7 +2327,58 @@ function passkeyCard(g, reload) {
     h("p", { class: "muted small" }, `Authelia ${g.autheliaVersion || ""}. Locked out? Use the rescue port, or run sudo helios-ctl gate-off over SSH or on the console.`));
 }
 
-function addPasskeyDialog(gatePage, reload) {
+// Browsers only allow passkeys on a page with a trusted certificate: either the
+// owner's domain (Let's Encrypt, nothing to install) or the router's own (install once)
+const DNS_HELP = {
+  cloudflare: ["Cloudflare", "In the Cloudflare dashboard: My Profile → API Tokens → Create Token → “Create Custom Token”. Permissions: Zone · DNS · Edit, and Zone · Zone · Read. Zone Resources: Include · Specific zone · your domain. Create it and copy the token (Cloudflare shows it once)."],
+  desec: ["deSEC", "At desec.io (free names like yourname.dedyn.io, or your own domain): log in → Token management → create a token and copy it. Safer: give it a policy that only allows writing TXT records under _acme-challenge (see the guide). deSEC is slow to publish records, so the first certificate takes about 4 minutes."],
+};
+function certStep(g, reload, show) {
+  const c = g.certificate || {};
+  const dl = h("button", { class: "btn btn-secondary btn-sm", onclick: () => api("gate-ca").then(r => downloadText(r.pem, r.filename)).catch(show) },
+    c.domain ? "Download router certificate (backup)" : "Download certificate");
+  if (!c.domain) {
+    return gateStep(!!g.ca, "Your browser trusts the router",
+      h("p", { class: "muted small" }, "Browsers only allow passkeys on pages with a trusted certificate. Download the router's certificate and install it as a trusted authority, once per device (on a phone: Settings → Security → install a certificate)."),
+      dl,
+      h("p", { class: "muted small", style: "margin-top:8px" }, "No installing: give the sign-in page a name under your own domain on Cloudflare, or a free one from deSEC (yourname.dedyn.io). Set helios.gate.domain (and helios.gate.acme.dnsProvider) in site.nix; the router then gets a certificate every browser trusts."));
+  }
+  const [prov, help] = DNS_HELP[c.provider] || [c.provider, ""];
+  const le = c.issuer === "letsencrypt";
+  const fallback = !le && c.tokenSet && g.enforced;
+  return gateStep(le, `Certificate for ${c.domain}`,
+    fallback ? h("div", { class: "alert alert-warn small" }, h("strong", {}, "Using the router's own certificate for now. "),
+      "Devices that haven't installed it can't use passkeys until Let's Encrypt works again; the code fallback still works on them. Check the token and the internet connection.") : null,
+    h("p", { class: "muted small" }, le
+      ? `Let's Encrypt, renewed automatically (valid until ${new Date(c.expires * 1000).toLocaleDateString()}). Browsers trust it: nothing to install.`
+      : c.tokenSet
+        ? "Waiting for Let's Encrypt (usually a minute). Until then, and if renewal keeps failing, the router's own certificate is used."
+        : `Needs a ${prov} API token so the router can prove the domain with a DNS record. Nothing is exposed to the internet; the token stays on the router.`),
+    c.tokenSet && le ? null : h("p", { class: "muted small" }, help),
+    h("div", { class: "card-actions" },
+      h("button", { class: "btn btn-" + (c.tokenSet ? "secondary" : "primary") + " btn-sm", onclick: () => dnsTokenDialog(prov, reload) }, c.tokenSet ? `Replace ${prov} token` : `Set ${prov} token`),
+      dl));
+}
+
+function dnsTokenDialog(prov, reload) {
+  const pw = h("input", { type: "password", autocomplete: "current-password" });
+  const tok = h("input", { type: "password", autocomplete: "off", spellcheck: false, class: "mono" });
+  const err = hwErr();
+  modal({ title: `${prov} API token`, body: [
+    h("p", {}, "Stored on the router only (root-only), never in git or backups."),
+    err,
+    h("label", { class: "field" }, h("span", {}, `${prov} API token`), tok),
+    h("label", { class: "field" }, h("span", {}, "Admin password"), pw)],
+  foot: close => [
+    h("button", { class: "btn btn-primary", onclick: ev => { err.hidden = true; ev.target.disabled = true;
+      apiInput(JSON.stringify({ current: pw.value, token: tok.value.trim() }), "gate-dns-token")
+        .then(() => { close(); toast("Token saved — the certificate usually arrives within a minute"); reload(); })
+        .catch(e => hwShowErr(err, e)).finally(() => { ev.target.disabled = false; }); } }, "Save"),
+    h("button", { class: "btn btn-link", onclick: close }, "Cancel")] });
+  tok.focus();
+}
+
+function addPasskeyDialog(gatePage, reload, user) {
   const codeBox = h("div", { class: "mono", style: "font-size:1.3em;letter-spacing:.1em;margin:6px 0" }, "—");
   const err = hwErr();
   const fetchCode = () => api("gate-code").then(r => {
@@ -2328,13 +2386,19 @@ function addPasskeyDialog(gatePage, reload) {
     if (!r.code && r.text) codeBox.textContent = r.text;
   }).catch(e => hwShowErr(err, e));
   modal({ title: "Add a passkey", wide: true, onClose: reload, body: [
-    h("ol", {},
-      h("li", {}, "Open the ", h("a", { href: gatePage, target: "_blank", rel: "noopener noreferrer" }, "sign-in page"), " and sign in with the admin password."),
-      h("li", {}, "Go to Settings → Two-Factor Authentication and add a ", h("strong", {}, "WebAuthn credential"), " (that's the passkey)."),
-      h("li", {}, "It asks for a one-time code to confirm it's you. Get it here:", codeBox,
-        h("button", { class: "btn btn-secondary btn-sm", onclick: fetchCode }, "Show latest code")),
-      h("li", {}, "Plug in or tap your key (or pick your phone), enter its PIN and touch it. Give it a name you'll recognise.")),
-    h("p", { class: "muted small" }, "The key's PIN is checked on the key itself; the router never sees it."),
+    h("p", {}, "Keep this window open: you'll need the code from step 3."),
+    h("ol", { class: "steps" },
+      h("li", {}, "Open the ", h("a", { href: gatePage, target: "_blank", rel: "noopener noreferrer" }, "sign-in page"),
+        " (it opens in a new tab). Sign in with username ", h("strong", { class: "mono" }, user || "your admin login"), " and the admin password."),
+      h("li", {}, "Open ", h("strong", {}, "Settings"), " (top right) → ", h("strong", {}, "Two-Factor Authentication"),
+        ". Under ", h("strong", {}, "WebAuthn Credentials"), " (that's what Authelia calls passkeys), choose ", h("strong", {}, "Add"),
+        " and give it a name you'll recognise, like “pico-fido” or “Pixel”."),
+      h("li", {}, "It asks for a one-time code to confirm it's you. Press the button and type in the code:", codeBox,
+        h("button", { class: "btn btn-secondary btn-sm", onclick: fetchCode }, "Show latest code"),
+        h("div", { class: "muted small" }, "Codes last 5 minutes. No code? Ask for a new one on the sign-in page, then press the button again.")),
+      h("li", {}, "Your browser asks for the key: plug it in (or tap it, or pick your phone), enter the key's PIN, then touch it."),
+      h("li", {}, "Back here, press ", h("strong", {}, "Done"), ". The passkey shows in the list. Then do “Try it”.")),
+    h("p", { class: "muted small" }, "The key's PIN is checked on the key itself; the router never sees it. Browser says passkeys aren't available? The certificate step isn't done on this device."),
     err],
   foot: close => [h("button", { class: "btn btn-primary", onclick: close }, "Done")] });
 }
@@ -2449,7 +2513,7 @@ function viewAdvanced(root) {
   const svc = h("div"), lw = h("div"), mt = h("div"), sys = h("div"), bk = h("div"), drv = h("div"), sec = h("div"), acct = h("div", { class: "acct-stack" });
   grid.append(acct, svc, mt, lw, sys, bk, drv, sec);
   const loadAcct = () => Promise.all([api("account"), api("gate").catch(() => null)])
-    .then(([r, g]) => acct.replaceChildren(accountCard(r, loadAcct, g), g ? passkeyCard(g, loadAcct) : ""))
+    .then(([r, g]) => acct.replaceChildren(accountCard(r, loadAcct, g), g ? passkeyCard(g, loadAcct, r.user) : ""))
     .catch(e => acct.replaceChildren(h("div", { class: "alert alert-bad" }, e.message)));
   loadAcct();
   const loadMt = () => api("reboot-status").then(r => mt.replaceChildren(maintenanceCard(r, loadMt))).catch(e => mt.replaceChildren(h("div", { class: "alert alert-bad" }, e.message)));
