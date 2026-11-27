@@ -209,7 +209,10 @@ lib.mkIf (cfg.internal.on "remote") {
         after = [ "network.target" ];
         path = [ pkgs.jq pkgs.iproute2 ];
         serviceConfig = { Restart = "always"; RestartSec = 5; };
-        # Optional credentials live in egress/proxy.json, not in the Nix store
+        # Optional credentials live in egress/proxy.json, not in the Nix store.
+        # Routing: the main table without its default route first (as wg-quick does),
+        # so replies to WireGuard / OpenVPN clients take their connected routes
+        # instead of the tunnel's default; then everything else into the tunnel.
         script = ''
           creds=""
           if [ -s ${dir}/egress/proxy.json ]; then
@@ -219,7 +222,7 @@ lib.mkIf (cfg.internal.on "remote") {
           fi
           exec ${pkgs.tun2socks}/bin/tun2socks -device tun://tun-out -interface eth0 -fwmark 2 \
             -proxy "${eg.proxy.type or "socks5"}://$creds${eg.proxy.host or ""}:${toString (eg.proxy.port or 1080)}" \
-            -tun-post-up "ip addr add 198.18.0.1/15 dev tun-out; ip link set tun-out up; ip route replace default dev tun-out table 100; ip rule add not fwmark 0x2 table 100 priority 200 2>/dev/null || true"
+            -tun-post-up "ip addr add 198.18.0.1/15 dev tun-out; ip link set tun-out up; ip route replace default dev tun-out table 100; ip rule add lookup main suppress_prefixlength 0 priority 190 2>/dev/null || true; ip rule add not fwmark 0x2 table 100 priority 200 2>/dev/null || true"
         '';
       };
 
@@ -266,7 +269,18 @@ ${ip} rule add to ${n} lookup main priority 85
 
             chain forward {
               type filter hook forward priority filter; policy accept;
-              ct state vmap { established : accept, related : accept, invalid : drop }
+              # Remote access is IPv4-only: the DNS redirect, the DoH / WARP sets and
+              # the kill switch below only know IPv4 (the host drops the container's
+              # IPv6 too, but it can't see inside a tunnel). Clients fall back to IPv4.
+              meta nfproto ipv6 reject with icmpx admin-prohibited
+              ct state invalid drop
+              # Replies pass. The side that opened a connection goes through the rules
+              # below on every packet, like Heliopause on the host. Taking a home
+              # network away from one way in cuts that way's open connections even
+              # while another way in keeps it, and when a tunnel goes away, open
+              # connections hit the kill switch rather than leaving through eth0.
+              # Related packets (ICMP errors) aren't exempt either.
+              ct direction reply ct state established accept
               # The host can't see inside a tunnel, so the DNS bypass blocks happen here too
               meta l4proto { tcp, udp } th dport 853 reject
               ip daddr @doh_v4 reject
@@ -282,6 +296,9 @@ ${ip} rule add to ${n} lookup main priority 85
 
             chain output {
               type filter hook output priority filter; policy accept;
+              # The container's own IPv6 (the proxy connecting on clients' behalf)
+              # would get round the same IPv4-only filtering
+              meta nfproto ipv6 oifname { "eth0"${lib.optionalString tunnel '', "${tunIf}"''} } reject with icmpx admin-prohibited
               ${lib.optionalString R.proxy.enabled ''
               # The proxy connects on clients' behalf: same DNS bypass blocks
               ip daddr @doh_v4 reject

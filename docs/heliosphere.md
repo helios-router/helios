@@ -29,7 +29,13 @@ through the way out. Away from home, use WireGuard, OpenVPN or Tailscale.
 (advertised as subnet routes), WireGuard and OpenVPN can each be allowed to
 reach chosen home networks. The container enforces it per interface, so
 allowing it for one way in doesn't open it for another. The host allows
-Heliosphere into the union of those networks. Picking an admin network
+Heliosphere into the union of those networks: it sees every client as
+10.60.0.2, so only the container can tell the ways in apart. Its firewall
+accepts replies up front and checks the side that opened a connection on
+every packet, so taking a network away from one way in also cuts that way's
+open connections, even while another way in keeps the network. (An Apply that
+changes Heliosphere also restarts the container, which empties its connection
+table; the rules don't rely on that.) Picking an admin network
 gives remote devices everything that network can reach; Photosphere warns
 about that.
 
@@ -49,16 +55,39 @@ outside the tunnel:
 - replies to incoming connections, marked with conntrack mark 0x1
 - the tunnel's own packets (fwmark 51820 for wg-quick, 0x2 for OpenVPN and tun2socks)
 
+This covers connections that are already open, too. The container checks every
+packet a client sends against the kill switch, so when the tunnel's routes or its
+device go away, an open TCP or UDP connection is dropped rather than following the
+main table's default route out of eth0. Only replies are accepted without that
+check. The host is a second line: it accepts nothing from the container that
+doesn't come from 10.60.0.2, which tunnel-NATed packets don't.
+
+**IPv4 only**: the container refuses to forward IPv6, and refuses its own IPv6
+on eth0 and the tunnel. The DNS redirect, the DoH and WARP sets and the kill
+switch only know IPv4, and an upstream tunnel with IPv6 would otherwise carry
+clients' IPv6 (for example Tailscale exit-node traffic) past them. Clients fall
+back to IPv4. The host drops IPv6 from the container as well.
+
 **DNS filtering through a tunnel**: the host firewall can't see inside the
 tunnel. So the container enforces it itself: it redirects port 53 from
 clients to 10.60.0.1, and blocks DoT (853) and the known DoH/WARP addresses
 (the same list as the host, `pkgs/blocklists.json`).
+
+DNS keeps working while the way out is down, because it goes to the router.
+That also means clients' DNS questions leave through the router's own internet
+connection, not through the tunnel: the ISP can see which names remote clients
+look up, even with a VPN way out.
 
 **Replies to incoming connections**: with a tunnel as the default route,
 replies to WireGuard/OpenVPN/proxy clients would leave through the tunnel.
 So connections that arrive on eth0 get conntrack mark 0x1. Their replies get
 fwmark 0x1, and `ip rule fwmark 0x1 lookup main` sends them back the way they
 came.
+
+Replies to WireGuard and OpenVPN clients themselves (10.61/10.62) take the main
+table's connected routes: wg-quick adds `lookup main suppress_prefixlength 0`
+before its tunnel table, and the proxy way out (tun2socks) adds the same rule at
+priority 190. Without it, those replies would follow table 100 back into the proxy.
 
 ## Configuration
 

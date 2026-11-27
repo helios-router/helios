@@ -59,6 +59,15 @@ b() { if yesno "$1" "$2"; then echo true; else echo false; fi; }
 o_tailscale=$(b "  Tailscale (remote admin, exit nodes)" y)
 login=""
 if [ "$o_tailscale" = true ]; then
+  # An explicit yes to what it means (README "Tailscale is an admin door")
+  echo "    Tailscale is an admin door: the router treats its Tailscale interface like an"
+  echo "    admin network. Every device your tailnet policy lets in can reach every home"
+  echo "    network and the router's admin pages, and a new tailnet's default policy lets"
+  echo "    every device in. Merge tailnet-policy.hujson (copied to /etc/nixos) into your"
+  echo "    tailnet policy before you add the auth key."
+  o_tailscale=$(b "  Turn on Tailscale with that in mind?" y)
+fi
+if [ "$o_tailscale" = true ]; then
   login=$(ask "  Your own Headscale server URL (https://…, empty for Tailscale's)" "")
   [ -z "$login" ] || [[ "$login" =~ ^https://[^[:space:]\"]+$ ]] || { echo "Must start with https://"; exit 1; }
 fi
