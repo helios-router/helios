@@ -68,6 +68,14 @@ lib.mkIf (cfg.internal.on "remote") {
     "z ${dir}/proxy/users 0400 heliosphere-proxy heliosphere-proxy -"
     "d ${dir}/egress 0700 root root -"
   ];
+  # The container's start script gives the host end of its link its address. Without this,
+  # systemd-networkd applies systemd's own 80-container-ve.network to it, which runs a DHCP
+  # server there (taking port 67, so Kea can't listen on the LANs) and turns on masquerading
+  # and IPv6 forwarding for the whole router.
+  systemd.network.networks."10-ve-heliosphere" = {
+    matchConfig.Name = "ve-heliosphere";
+    linkConfig.Unmanaged = true;
+  };
   # The container can't load kernel modules itself
   boot.kernelModules = lib.optional usesWg "wireguard" ++ [ "tun" ];
 

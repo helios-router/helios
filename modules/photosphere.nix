@@ -10,6 +10,8 @@ let
 
   runtimePath = lib.makeBinPath (with pkgs; [
     git iproute2 nftables iputils vnstat nix systemd coreutils ntfy-sh
+    # Remote access: OpenVPN PKI and proxy passwords, WireGuard keys, client QR codes
+    openssl wireguard-tools qrencode openvpn
   ] ++ lib.optional cfg.tailscale.enable config.services.tailscale.package)
     + ":/run/current-system/sw/bin";
 

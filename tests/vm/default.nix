@@ -2,5 +2,6 @@
 { self, pkgs, installerArgs }:
 {
   router = pkgs.testers.runNixOSTest (import ./router.nix { inherit self; });
+  hardening = pkgs.testers.runNixOSTest (import ./hardening.nix { inherit self; });
   offline-install = pkgs.testers.runNixOSTest (import ./offline-install.nix { inherit installerArgs; });
 }

@@ -58,14 +58,16 @@ let
 in
 lib.mkMerge [
 # Always: a preset can be downloaded before logwatch is switched on. llama-cpp runs as this
-# fixed account instead of a DynamicUser, so the models can be its own (0700 folder, 0400
-# files) and nobody else's; ProtectSystem=strict keeps them read-only to it. z only touches
-# what already exists.
+# fixed account instead of a DynamicUser, so the models can be its own (0400 files) and
+# nobody else's. The folder is root's with group llm (0750): llama-cpp can read it but not
+# write it, and systemd-tmpfiles can still fix a root-owned model someone copied in (it
+# won't step from a folder an ordinary account owns to a root-owned file inside it).
+# z only touches what already exists.
 {
   users.users.llm = { isSystemUser = true; group = "llm"; };
   users.groups.llm = { };
   systemd.tmpfiles.rules = [
-    "z /var/lib/llm 0700 llm llm -"
+    "z /var/lib/llm 0750 root llm -"
     "z /var/lib/llm/*.gguf 0400 llm llm -"
   ];
 }
