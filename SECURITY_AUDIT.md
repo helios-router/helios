@@ -8,7 +8,7 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md). Don't open a public i
 
 | | |
 |---|---|
-| Last full audit | 2026-11 (PR #14) |
+| Last full audit | 2026-11 (PR #14); remote access re-audited 2026-11 (HA-23 to HA-26) |
 | Scope | Every module in `modules/`, `pkgs/helios-ctl.py`, `pkgs/photosphere/`, `pkgs/logwatch.sh`, `installer/`, `flake.nix` / `flake.lock`, `.github/` |
 | Method | Static review of the generated configuration and execution paths (not the comments), plus runtime tests where possible: real kernel conntrack and nftables in network namespaces, NixOS VM tests, helios-ctl unit tests |
 | Not covered | Behaviour on physical hardware (see [Manual verification](#manual-verification)), third-party firmware on switches and access points, the security of Tailscale, Authelia, Caddy, Cockpit and nixpkgs themselves |
@@ -67,6 +67,10 @@ Status: **Fixed** = fixed and covered by a regression test. **Open** = known and
 | HA-20 | Info | `tailscale0` is fully trusted | Accepted |
 | HA-21 | Info | MAC addresses can be copied | Accepted |
 | HA-22 | Info | Weaker CI and release hygiene items | Open |
+| HA-23 | Medium | Remote-access clients' IPv6 got round the container's IPv4-only filtering | Fixed |
+| HA-24 | Low | Container accepted open connections before the kill switch | Fixed |
+| HA-25 | Low | Per-way-in home-network revocation relied on the container restarting | Fixed |
+| HA-26 | Info (functional) | Proxy egress sent replies for WireGuard / OpenVPN clients back into the tunnel | Fixed |
 
 ### HA-01: Source checks ran after connection tracking (High, Fixed)
 
@@ -203,13 +207,15 @@ The domain, SSH key and WAN VLAN are spliced into `site.nix` with `sed`, escapin
 ### HA-19: Heliosphere containment (Info)
 
 - **Accepted:** the host sees every remote client as `10.60.0.2`. It enforces only the union of the networks the ways in allow. The per-way-in split (Tailscale vs WireGuard vs OpenVPN) is enforced only inside the container. If the container is compromised, its clients reach that union, and nothing more: IPv4 only, no router services except DNS.
-- **Open:** in VPN egress mode, clients' DNS still resolves through the router's AdGuard over the router's own WAN, not through the tunnel. That's a privacy leak, if hiding traffic from the local ISP is the point of the egress VPN.
+- **Open:** in VPN egress mode, clients' DNS still resolves through the router's AdGuard over the router's own WAN, not through the tunnel. That's a privacy leak, if hiding traffic from the local ISP is the point of the egress VPN. It is also why DNS keeps working when the tunnel is down. Fixing it means AdGuard sending 10.60.0.2's questions to a resolver inside the container that only uses the tunnel. That's a design change, not done yet.
+- **Since HA-25:** the container re-checks open connections itself, so the per-way-in split holds for connections that are already open too.
 
 ### HA-20: `tailscale0` is fully trusted (Info, Accepted)
 
 Heliopause accepts all input and forward traffic from `tailscale0`. The tailnet policy is the only gate. `templates/tailnet-policy.hujson` restricts it correctly, but Tailscale's default policy lets every node in, and the README warns about this. `--accept-routes` is off.
 
 - **Re-check:** whenever `modules/tailscale.nix` or the template changes.
+- **Since 2026-11:** the installer explains this and asks for an explicit yes before turning Tailscale on (`installer/helios-install.sh`). The admin model itself is unchanged.
 
 ### HA-21: MAC addresses can be copied (Info, Accepted)
 
@@ -222,6 +228,32 @@ Quarantine and pausing a device match by MAC. A device can copy a known MAC, or 
 - The ISO is published without a checksum, signature or build attestation.
 - `playwright install --with-deps` and `pipx run zizmor` aren't hash-pinned.
 - The wiki workflow puts its token in the clone URL. The runner is ephemeral.
+
+### HA-23: Remote-access clients' IPv6 got round the container's filtering (Medium, Fixed)
+
+- **What:** the container forwarded IPv6, and nothing in it filtered IPv6. Tailscale's routing features turn on IPv6 forwarding. The DNS redirect (`dnat ip to`), the DoH and WARP sets and the kill switch (`ip daddr != host`) only match IPv4. With an egress tunnel that carries IPv6 (many VPN providers' WireGuard configs have `::/0`), clients' IPv6 left through the tunnel unfiltered: DNS to any IPv6 resolver and DoH to IPv6 addresses got round Magnetosphere. The host can't see inside the tunnel, so its own IPv6 drop for the container doesn't help there. The container's own IPv6, such as the proxy connecting to an AAAA address, could do the same.
+- **Attacker:** a remote-access client (for example a Tailscale exit-node user) who wants unfiltered DNS. It needs an egress tunnel with IPv6.
+- **Fix:** the container refuses to forward IPv6 (`meta nfproto ipv6 reject`, the first forward rule in `modules/heliosphere.nix`), and refuses its own IPv6 on eth0 and the tunnel (output chain). Clients fall back to IPv4.
+- **Tests:** `tests/netns/heliosphere.py` ("client IPv6 forwarded", "client DNS over IPv6", for each way out); `tests/vm/hardening.nix` (IPv6 refused first in the real ruleset).
+
+### HA-24: Container accepted open connections before the kill switch (Low, Fixed)
+
+- **What:** the container's forward chain accepted every established packet first, so the kill switch only ever saw new connections. If the tunnel's routes went away while its device stayed up, open client connections followed the main table's default route out of eth0. The tunnel can lose its routes during an OpenVPN reconnect with `persist-tun`. When the device itself goes away (wg-quick down, tun2socks or OpenVPN exiting), the kernel's masquerade cleanup drops those connections' state, so they are re-checked as new anyway.
+- **Why only Low:** packets that escaped this way still carried the tunnel's NAT address, and the host's anti-spoofing (HA-01) accepts only 10.60.0.2 from the container. The container leaked them onto its link, but the host didn't pass them to the internet. The host is a second line, not the kill switch.
+- **Fix:** only reply-direction established packets are accepted up front. The side that opened a connection goes through the kill switch on every packet. Invalid packets are dropped, and related packets aren't exempt.
+- **Tests:** `tests/netns/heliosphere.py`, for each of WireGuard, OpenVPN and proxy egress, and for both failure modes (routes gone, device gone). It checks open TCP and UDP connections, new connections, DNS during the outage, reaching the host, and recovery. `tests/vm/hardening.nix` asserts the order in the real ruleset.
+
+### HA-25: Per-way-in revocation relied on the container restarting (Low, Fixed)
+
+- **What:** the same "established first" ordering meant that removing a home network from one way in (say WireGuard) left that way's open connections to it running, as far as the container's rules went. The host couldn't step in when another way in (say Tailscale) still had that network, because the host only sees the container as a whole. In practice an Apply restarts the container: nixpkgs' `restartIfChanged` defaults to true, and the container's system is a restart trigger. A restart empties its connection table, so this was latent.
+- **Fix:** the same re-check as HA-24, so revocation doesn't depend on a restart.
+- **Tests:** `tests/netns/heliosphere.py` (each way in has its access taken away while another way in keeps it: the open connection is cut, no new ones, the other way in is unaffected).
+
+### HA-26: Proxy egress misrouted client replies (Info, functional, Fixed)
+
+- **What:** tun2socks' routing sent everything without fwmark 0x2 to table 100 (the tunnel), with no main-table rule before it. Replies to WireGuard and OpenVPN clients (10.61/10.62) went back into the proxy instead of to the client. Tailscale clients were unaffected, because Tailscale's own routing rules come first.
+- **Fix:** `lookup main suppress_prefixlength 0` at priority 190, as wg-quick does. This only lets specific main-table routes win, never the default route, so it doesn't weaken the kill switch.
+- **Test:** `tests/netns/heliosphere.py` prints what the old routing does ("INFO: proxy egress with tun2socks' old routing"), and its proxy-egress checks run with the fix.
 
 ## Verified by design
 
@@ -248,13 +280,14 @@ These were checked in the 2026-11 audit and found sound. Re-check the relevant r
 | Test | Runs | Covers |
 |---|---|---|
 | `tests/netns/conntrack.py` | CI as root (all checks). Rootless anywhere with user namespaces (input checks only). | HA-01, HA-02, HA-03, plus legitimate traffic, NAT, and a connection kept open across a reload. It runs the old and new chain orderings side by side. |
+| `tests/netns/heliosphere.py` | CI as root. Rootless: `HELIOS_NETNS_DRY=1` only builds the namespaces and loads every ruleset. | HA-23 to HA-26: kill switch for each way out and each failure mode, per-way-in revocation, IPv6, DNS redirect and DoT/DoH blocking for every way in, host reachability, replies, recovery. It runs the old and new container orderings side by side. |
 | `tests/vm/router.nix` | CI (`nix build .#vmTests.router`) | HA-01, HA-03 on the real generated ruleset; isolation; SSH only from admin networks |
 | `tests/vm/hardening.nix` | CI | HA-06; MAC-based pausing; the gate; TOTP; recovery codes; service accounts |
 | `tests/vm/passkey.nix` | CI | WebAuthn passkey at the gate |
 | `tests/test_helios_ctl.py` | CI and locally (needs `bcrypt`) | HA-04, HA-05, HA-09, HA-10; input validation |
 | `tests/fuzz/` | ClusterFuzzLite | Egress config and settings parsing |
 
-**Note:** the namespace test models Heliopause's chains by hand. If you change rule order or the connection-tracking rules in `modules/heliopause.nix`, change `ruleset()` in the test to match. The VM tests cover the real generated ruleset.
+**Note:** the namespace tests model Heliopause's and Heliosphere's chains by hand. If you change rule order or the connection-tracking rules in `modules/heliopause.nix` or `modules/heliosphere.nix`, change `ruleset()` / `container_rules()` in the tests to match. The VM tests cover the real generated ruleset.
 
 ## Manual verification
 
@@ -265,6 +298,8 @@ These can't be tested in CI. Check them on real hardware after a security-releva
 3. **UPnP:** a mapping requested from a `upnp` network works from the WAN, and stops once it's removed (HA-07).
 4. **Rescue port with the gate on:** a laptop on the rescue port gets Cockpit with the password only. A device on any other network can't (HA-01, HA-06).
 5. **Tailnet:** the tailnet policy from the template is applied, and a node that isn't an admin can't reach the router (HA-20).
+6. **Remote access kill switch with a real provider:** with a WireGuard, OpenVPN and proxy way out in turn, keep a client streaming, then stop the tunnel (`systemctl stop wg-quick-wg-out` / `openvpn-egress` / `helios-egress-proxy` inside the container), and restart OpenVPN with the provider's own `persist-tun`. Nothing from the client may appear on the router's WAN (`tcpdump -ni wan host <client's destination>`), and traffic resumes through the tunnel once it's back (HA-24).
+7. **Remote access IPv6:** a Tailscale exit-node client with a way out that has IPv6 gets no IPv6 through Heliosphere, and its DNS still goes through Magnetosphere (HA-23).
 
 ## Keeping this file current
 
