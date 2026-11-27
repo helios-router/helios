@@ -33,6 +33,9 @@ rec {
     ];
     # python3: the conntrack subtests send and receive raw UDP/TCP from a chosen source address
     environment.systemPackages = [ pkgs.curl pkgs.netcat pkgs.python3 ];
+    # The revocation subtest listens here (the client's own firewall would refuse it
+    # before the router's rules are even in question)
+    networking.firewall.allowedTCPPorts = [ 7000 ];
   };
 
   client = id: vlanHost id { networkConfig = { DHCP = "ipv4"; IPv6AcceptRA = false; LinkLocalAddressing = "no"; }; };
