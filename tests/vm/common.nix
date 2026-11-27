@@ -31,7 +31,8 @@ rec {
       { matchConfig.Name = "vlan${toString id}"; }
       extra
     ];
-    environment.systemPackages = [ pkgs.curl pkgs.netcat ];
+    # python3: the conntrack subtests send and receive raw UDP/TCP from a chosen source address
+    environment.systemPackages = [ pkgs.curl pkgs.netcat pkgs.python3 ];
   };
 
   client = id: vlanHost id { networkConfig = { DHCP = "ipv4"; IPv6AcceptRA = false; LinkLocalAddressing = "no"; }; };
