@@ -183,7 +183,7 @@ in
         name = "helios_gate";
         expiration = "12h";
         inactivity = "1h";
-        remember_me = "-1";
+        remember_me = -1;   # a number: Authelia reads -1 as "off" (the string "-1" fails)
         cookies = [ {
           domain = fqdn;
           authelia_url = "https://${fqdn}:${toString port}/auth";
