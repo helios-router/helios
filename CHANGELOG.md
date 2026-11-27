@@ -32,7 +32,7 @@ track `main` through the flake, and the commit hash is the version.
 - Pausing the Log AI now really stops its timer runs. The pause check runs with
   full privileges, so it can read the pause file.
 - The PR guard blocks file names that git has to quote. Before, those files
-  skipped every line check, so a `fetchurl` or `curl | sh` in a file with a
+  skipped every line check, so a `fetchurl` or a download piped into a shell in a file with a
   non-ASCII name passed.
 - Pausing a device now also cuts it off by MAC, so it can't keep its internet
   over IPv6. DoH and WARP blocks cover IPv6 too, and IPv6 from the remote-access

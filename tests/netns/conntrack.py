@@ -42,6 +42,11 @@ TMP = tempfile.mkdtemp(prefix="helios-netns-")
 children = {}
 
 
+def write_file(path, text, mode="w"):
+    with open(path, mode) as f:
+        f.write(text)
+
+
 def sh(cmd, check=True):
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     if check and r.returncode:
@@ -140,7 +145,7 @@ table inet heliopause-nat {{
 
 def load(rules):
     path = os.path.join(TMP, "rules.nft")
-    open(path, "w").write(rules)
+    write_file(path, rules)
     sh(f"nft -f {path}")
 
 
@@ -177,14 +182,14 @@ while True:
         except OSError: pass
     seen = len(lines); time.sleep(0.05)
 """
-open(os.path.join(TMP, "server.py"), "w").write(SERVER)
-open(os.path.join(TMP, "client.py"), "w").write(CLIENT)
+write_file(os.path.join(TMP, "server.py"), SERVER)
+write_file(os.path.join(TMP, "client.py"), CLIENT)
 procs = []
 
 
 def server(name, addr, port, kind):
     log = os.path.join(TMP, f"{name}-{port}-{kind}.log")
-    open(log, "w").close()
+    write_file(log, "")
     procs.append(bg(name, [PY, "-I", os.path.join(TMP, "server.py"), addr, str(port), kind, log]))
     time.sleep(0.3)
     return log
@@ -192,18 +197,19 @@ def server(name, addr, port, kind):
 
 def client(name, host, port, kind, src="", sport=0):
     go = os.path.join(TMP, f"go-{name}-{port}-{kind}-{len(procs)}")
-    open(go, "w").close()
+    write_file(go, "")
     procs.append(bg(name, [PY, "-I", os.path.join(TMP, "client.py"), host, str(port), src, str(sport), kind, go]))
     time.sleep(0.3)
 
     def say(msg):
-        open(go, "a").write(msg + "\n")
+        write_file(go, msg + "\n", "a")
         time.sleep(0.6)
     return say
 
 
 def got(log, msg):
-    return msg in open(log).read().split()
+    with open(log) as f:
+        return msg in f.read().split()
 
 
 def stop_all():
@@ -244,7 +250,7 @@ def run_input(order):
 
 def server_local(addr, port, kind, tag):
     log = os.path.join(TMP, f"router-{tag}-{port}-{kind}.log")
-    open(log, "w").close()
+    write_file(log, "")
     procs.append(subprocess.Popen([PY, "-I", os.path.join(TMP, "server.py"), addr, str(port), kind, log]))
     time.sleep(0.3)
     return log
