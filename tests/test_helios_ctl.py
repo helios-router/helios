@@ -479,7 +479,7 @@ class HeliosCtl(unittest.TestCase):
         self.assertTrue(r["ok"], r)
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "llm/t.gguf")))
         self.assertEqual(oct(os.stat(os.path.join(self.tmp, "llm/t.gguf")).st_mode & 0o777), "0o400")
-        self.assertEqual(oct(os.stat(os.path.join(self.tmp, "llm")).st_mode & 0o777), "0o750")
+        self.assertEqual(oct(os.stat(os.path.join(self.tmp, "llm")).st_mode & 0o777), "0o700")   # tmpfiles widens it to root:llm 0750 on a router
         conf["logwatch"]["catalog"]["presets"]["t"]["sha256"] = "0" * 64; write_json(self.conf_path, conf)
         os.remove(os.path.join(self.tmp, "llm/t.gguf"))
         r = json.loads(subprocess.run([sys.executable, CTL, "logwatch-model-get", "t"], capture_output=True, text=True, env=env).stdout)

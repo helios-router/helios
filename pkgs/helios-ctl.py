@@ -18,7 +18,6 @@ import argparse
 import base64
 import datetime as dt
 import fcntl
-import grp
 import ipaddress
 import json
 import os
@@ -1421,14 +1420,11 @@ def cmd_logwatch_model_get(a):
     pr = LW_CATALOG.get("presets", {}).get(a.preset)
     if not pr:
         fail(f"no preset {a.preset!r}")
-    os.makedirs(LLM_DIR, mode=0o750, exist_ok=True)
-    # root's, group llm, 0750 (as the module's tmpfiles rule): llama-cpp reads it, can't write it
-    os.chmod(LLM_DIR, 0o750)
-    if os.geteuid() == 0:
-        try:
-            os.chown(LLM_DIR, 0, grp.getgrnam(LLM_USER).gr_gid)
-        except KeyError:
-            pass
+    os.makedirs(LLM_DIR, mode=0o700, exist_ok=True)
+    # The module's tmpfiles rule gives the folder its owner and mode (root:llm 0750: llama-cpp
+    # reads it, can't write it); apply it now rather than at the next boot
+    if os.geteuid() == 0 and not os.environ.get("HELIOS_NO_SYSTEMD"):
+        run(["systemd-tmpfiles", "--create", "--prefix=" + LLM_DIR])
     free = shutil.disk_usage(LLM_DIR).free
     if free < pr["bytes"] + 512 * 2**20:
         fail(f"not enough space in {LLM_DIR}: needs {pr['bytes'] // 2**20} MB, {free // 2**20} MB free")
