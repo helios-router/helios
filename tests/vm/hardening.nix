@@ -233,8 +233,19 @@ in
         jar = "/tmp/gate-cookies"
         def curl(path, *opts, host=fqdn):
             return router.succeed(f"curl -sk --resolve {host}:9090:127.0.0.1 -o /tmp/body -w '%{{http_code}} %{{redirect_url}}' {' '.join(opts)} https://{host}:9090{path}").split(" ", 1)
+        def dump(why):
+            # What Caddy and Cockpit answered, and their logs, before failing
+            for cmd in (f"curl -sk -D - -o /tmp/dump --resolve {fqdn}:9090:127.0.0.1 {base}/; head -c 600 /tmp/dump; echo",
+                        "curl -s -D - -o /dev/null -H 'X-Forwarded-Proto: https' http://127.0.0.1:9089/",
+                        "readlink /var/lib/helios-gate/tls.caddy; ls -la /var/lib/helios-gate",
+                        "journalctl -u caddy -u cockpit -u cockpit.socket -u 'cockpit-*' -u helios-gate-init --no-pager -n 60 -o cat"):
+                print(router.execute(cmd)[1])
+            raise Exception(why)
         # Not required yet: Cockpit straight through (its login page)
-        router.wait_until_succeeds(f"curl -sk --resolve {fqdn}:9090:127.0.0.1 {base}/ | grep -qi cockpit", timeout=60)
+        try:
+            router.wait_until_succeeds(f"curl -sk --resolve {fqdn}:9090:127.0.0.1 {base}/ | grep -qi cockpit", timeout=60)
+        except Exception:
+            dump("Cockpit didn't come through Caddy")
         code, _ = curl("/auth/")
         assert code == "200", f"gate page: {code}"
 
