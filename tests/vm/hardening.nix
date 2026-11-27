@@ -228,6 +228,11 @@ in
         assert addrs == ["127.0.0.1:9089"], f"Cockpit's socket isn't localhost-only: {sock}"
         assert "127.0.0.1:9089" in listen and not any(":9089" in l and "127.0.0.1:9089" not in l for l in listen.splitlines()), "Cockpit listens beyond localhost"
         assert any(":9090" in l and "caddy" in l for l in listen.splitlines()), "Caddy isn't serving :9090"
+        # Only Caddy (and root) may talk to Cockpit's localhost port: any other local
+        # account could skip the gate, or claim the rescue port in X-Forwarded-For
+        router.succeed("curl -s -o /dev/null -H 'X-Forwarded-Proto: https' http://127.0.0.1:9089/")
+        router.fail("setpriv --reuid=nobody --regid=nogroup --clear-groups curl -s --max-time 5 -o /dev/null http://127.0.0.1:9089/")
+        router.succeed("setpriv --reuid=caddy --regid=caddy --clear-groups curl -s --max-time 5 -o /dev/null -H 'X-Forwarded-Proto: https' http://127.0.0.1:9089/")
         fqdn = "helios.example.test"   # helios.gate.domain: the sign-in page's name
         base = f"https://{fqdn}:9090"
         jar = "/tmp/gate-cookies"

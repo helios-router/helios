@@ -132,7 +132,7 @@ in
   # What helios-ctl needs to manage the gate (also when it's off, to say so)
   helios.internal.gate = {
     enabled = I.on "gate";
-    inherit fqdn port stateDir gateDir;
+    inherit fqdn port cockpitPort stateDir gateDir;
     url = "https://${fqdn}:${toString port}";
     # Package paths only while it's on, so routers without the gate (and the
     # installer image) don't carry Authelia

@@ -67,6 +67,11 @@ let
 
   isMediaClient = d: (d.media or false) && !(I.byName.${d.vlan}.access.admin or true);
   rescue = cfg.interfaces.rescueAddress;
+  # Numeric: the ruleset is checked at build time, where the account doesn't exist
+  caddyUid = let u = config.users.users.caddy.uid or null; in if u != null then u else config.ids.uids.caddy;
+  rescueNet = "${lib.concatStringsSep "." (lib.take 3 (lib.splitString "." rescue))}.0/24";
+  # Networks whose devices may open ports with UPnP / NAT-PMP (voyager.nix)
+  upnpNets = lib.optionals ((cfg.state.upnp or { }).enabled or true) (where (a: a.upnp));
   sw = cfg.solarWind;
   trapPorts = lib.concatMapStringsSep ", " toString ([ 22 23 80 443 2222 3000 8080 8090 9090 ] ++ lib.optional (I.on "notifications") sw.port);
 in
@@ -122,7 +127,20 @@ in
           # The rescue address only answers on the rescue port itself — otherwise
           # Linux would accept it from any VLAN and expose password SSH there.
           ip daddr ${rescue} iifname != "rescue0" drop
-          ct state vmap { established : accept, related : accept, invalid : drop }
+          # ...and the rescue subnet only ever comes from the rescue port: Caddy and
+          # PAM skip the second factor for it by source address (gate.nix, airlock.nix)
+          ip saddr ${rescueNet} iifname != "rescue0" drop
+          # Non-admin networks only send from their own addresses (0.0.0.0: a DHCP
+          # request before the device has one; IPv6: what the router routes back
+          # there, link-local included; ICMPv6 left alone for neighbour discovery)
+          ${lines (map (n: ''iifname "${n}" ip saddr != { ${net n}, 0.0.0.0 } drop'') nonAdmin)}
+          ${on nonAdmin "meta nfproto ipv6 meta l4proto != ipv6-icmp fib saddr . iif oif missing drop"}
+          # Replies to the router's own connections pass. Packets a client sends on
+          # an open connection go through the rules below again, so taking a
+          # network's admin access away also cuts its open SSH / Cockpit sessions.
+          ct state invalid drop
+          ct state related accept
+          ct direction reply ct state established accept
           iifname "wan" icmp type echo-request limit rate over 10/second drop
           meta l4proto { icmp, ipv6-icmp } accept
           ${unknown "jump quarantine_in   # not named yet"}
@@ -140,19 +158,42 @@ in
           ${lib.optionalString ts ''iifname "wan" udp dport 41641 accept   # Tailscale direct''}
         }
 
+        ${lib.optionalString (I.on "gate") ''
+        # Sign-in gate: Cockpit listens on localhost behind Caddy and believes the
+        # client address Caddy sends (X-Forwarded-For, for the rescue-port rule).
+        # Only Caddy (and root) may connect, so no local service account can skip
+        # the gate or claim to be on the rescue port.
+        chain output {
+          type filter hook output priority filter; policy accept;
+          oifname "lo" tcp dport ${toString I.gate.cockpitPort} meta skuid != { 0, ${toString caddyUid} } reject with tcp reset
+        }
+        ''}
         chain forward {
           type filter hook forward priority filter; policy drop;
           # Blocked devices first, so pausing one also kills its open connections
           ip saddr @cutoff reject
           ether saddr @cutoff_mac reject
           ip daddr @cutoff drop
-          ct state vmap { established : accept, related : accept, invalid : drop }
 
-          # Anti-spoofing: a non-admin network may only send from its own subnet
+          # Anti-spoofing, before connection tracking: conntrack matches a packet by
+          # addresses and ports only, not the interface it came in on, so a spoofed
+          # packet copying another network's open connection would otherwise pass
+          # as "established". A non-admin network may only send from its own subnet
+          # (IPv4), or from a prefix the router routes to it (IPv6: SLAAC prefixes
+          # come from the ISP, so the routing table is the source of truth).
           ${lines (map (n: ''iifname "${n}" ip saddr != ${net n} drop'') nonAdmin)}
+          ${on nonAdmin "meta nfproto ipv6 fib saddr . iif oif missing drop"}
+          ip saddr ${rescueNet} iifname != "rescue0" drop
           ${lib.optionalString hs ''iifname "ve-heliosphere" ip saddr != 10.60.0.2 drop''}
           # Remote access is IPv4-only, and its filtering (inside the container too) only knows IPv4
           ${lib.optionalString hs ''iifname "ve-heliosphere" meta nfproto ipv6 drop''}
+
+          # Replies pass; the side that opened a connection goes through the rules
+          # below on every packet, so a policy change (reach, internet, quarantine,
+          # a removed port forward) applies to connections that are already open.
+          ct state invalid drop
+          ct state related accept
+          ct direction reply ct state established accept
 
           # Devices not named yet on "quarantine" networks
           ${unknown "jump quarantine_fwd"}
@@ -170,8 +211,12 @@ in
           # Network-to-network access ("reach")
           ${reachRules}
 
-          # Port forwards opened by UPnP/NAT-PMP (miniupnpd only maps for "upnp" networks)
-          iifname "wan" ct status dnat accept
+          # Port forwards opened by UPnP/NAT-PMP: only to networks that may ask
+          # (miniupnpd only maps for "upnp" networks), so a stray DNAT rule can't
+          # open an admin network to the internet
+          ${lib.optionalString (upnpNets != [ ]) ''iifname "wan" oifname { ${quote upnpNets} } ct status dnat accept''}
+          # Remote access: the WireGuard / OpenVPN ports (heliopause-nat below)
+          ${lib.optionalString (hs && (R.wireguard.enabled || R.openvpn.enabled)) ''iifname "wan" oifname "ve-heliosphere" ip daddr ${hsIp} ct status dnat accept''}
 
           # Remote access clients may reach the home networks their way in allows
           ${lib.optionalString (hs && hsLan != [ ]) ''iifname "ve-heliosphere" oifname { ${quote hsLan} } accept   # Remote access → home networks''}

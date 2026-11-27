@@ -8,6 +8,32 @@ track `main` through the flake, and the commit hash is the version.
 ## [Unreleased]
 
 ### Security
+- Heliopause checks source addresses before connection tracking. Conntrack
+  matches by addresses and ports, not by interface, so a device on a non-admin
+  network could inject packets into another network's open connections. Non-admin
+  networks now also get IPv6 source checks (from the routing table, so SLAAC
+  prefixes keep working), and the rescue subnet is only accepted on the rescue port.
+- Changing a network's access now affects connections that are already open.
+  Replies still pass, but the side that opened a connection is checked against the
+  rules on every packet. Removing admin access ends open SSH and Cockpit sessions,
+  removing a reach permission cuts the flows it allowed, and removing a port
+  forward stops its traffic.
+- WAN port forwards are only accepted to UPnP networks and to the remote-access
+  container's VPN ports. A stray DNAT rule can no longer open an admin network.
+- With the sign-in gate on, only Caddy (and root) can connect to Cockpit's
+  localhost port. Before, any local service account could skip the gate, or claim
+  to be on the rescue port through `X-Forwarded-For` and skip the TOTP code.
+- helios-ctl hands private files (Authelia's users file, Heliosphere secrets) to
+  their service account through the file descriptor. Before, the account owning
+  the folder could swap in a symlink and get root to chown any file, such as
+  `/etc/shadow`. `write_json` now uses a fresh temp file instead of a fixed
+  `.tmp` name that a service could plant as a link. `restore` takes only a commit
+  id, and printer names and job ids can't start with `-`.
+- Pausing the Log AI now really stops its timer runs. The pause check runs with
+  full privileges, so it can read the pause file.
+- The PR guard blocks file names that git has to quote. Before, those files
+  skipped every line check, so a `fetchurl` or `curl | sh` in a file with a
+  non-ASCII name passed.
 - Pausing a device now also cuts it off by MAC, so it can't keep its internet
   over IPv6. DoH and WARP blocks cover IPv6 too, and IPv6 from the remote-access
   container is dropped. (#4)

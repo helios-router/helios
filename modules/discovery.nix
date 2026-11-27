@@ -120,7 +120,7 @@ lib.mkMerge [
       CPUQuota = "${toString st.cpuPercent}%";
       Nice = 19;
       OOMScoreAdjust = 900;
-      ExecCondition = "${ctl} logwatch-guard --check";    # not while paused
+      ExecCondition = "+${ctl} logwatch-guard --check";    # not while paused
     };
     unitConfig.ConditionPathExists = modelPath;          # no model yet: don't crash-loop
   };
@@ -142,7 +142,7 @@ lib.mkMerge [
     serviceConfig = {
       Type = "oneshot";
       Slice = "helios-ai.slice";
-      ExecCondition = "${ctl} logwatch-guard --check";
+      ExecCondition = "+${ctl} logwatch-guard --check";
       # Wait (up to 3 min) for the model to load when it's started on demand
       ExecStartPre = lib.mkIf local "${pkgs.bash}/bin/bash -c 'for i in $(seq 90); do ${pkgs.curl}/bin/curl -fsS -m 2 ${llmUrl}/health >/dev/null 2>&1 && exit 0; sleep 2; done; echo model did not load; exit 1'";
       ExecStart = lib.getExe logwatch;

@@ -59,7 +59,8 @@ URL_RE = re.compile(r"(?:github:|https?://)[^\s\"'<>)]+")
 
 
 def git(*args):
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True, errors="replace").stdout
+    # quotepath=off: non-ASCII names come out as themselves, not "b/\303\251…"
+    return subprocess.run(["git", "-c", "core.quotepath=off", *args], check=True, capture_output=True, text=True, errors="replace").stdout
 
 
 findings = []  # (severity, file, line, message, snippet)
@@ -101,6 +102,14 @@ def is_text(path):
     return b"\0" not in data
 
 
+# File names git still has to quote (tabs, newlines, quotes, backslashes, control
+# characters) would hide the file from the line checks below, which only read
+# "+++ b/<path>" headers: block them, and anything else outside a plain charset.
+SAFE_PATH = re.compile(r"[A-Za-z0-9._/@+-]+")
+for name in git("diff", "--name-only", "-z", "-M", "--no-ext-diff", base, head).split("\0"):
+    if name and not SAFE_PATH.fullmatch(name):
+        add("BLOCK", name, 0, "file name with unusual characters (would skip the line checks)")
+
 numstat = git("diff", "--numstat", "-M", "--no-ext-diff", base, head)
 for row in numstat.splitlines():
     added, _, path = row.split("\t", 2)
@@ -121,6 +130,8 @@ path, lineno = None, 0
 for raw in diff.splitlines():
     if raw.startswith("+++ "):
         path = raw[6:] if raw.startswith("+++ b/") else None
+        if path is None and raw != "+++ /dev/null":
+            add("BLOCK", raw[4:], 0, "diff header the guard can't read (line checks skipped)")
         continue
     m = re.match(r"@@ -\S+ \+(\d+)", raw)
     if m:
