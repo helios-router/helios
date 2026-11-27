@@ -24,7 +24,11 @@ def save():
 
 
 def export(key, rows):
-    """YAML, as Authelia 4.39 writes it whatever the file is called."""
+    """YAML, as Authelia 4.39 writes it whatever the file is called (and, like
+    it, an error when there's nothing to export)."""
+    if not rows:
+        sys.stderr.write("Error: no data to export\n\nUsage:\n  authelia storage user export [flags]\n")
+        sys.exit(1)
     lines = ["# yaml-language-server: $schema=https://www.authelia.com/schemas/v4.39/json-schema/exports.%s.json" % key, key + ":"]
     for row in rows:
         first = True

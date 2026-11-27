@@ -4626,7 +4626,12 @@ def authelia_export(kind):
     d = tempfile.mkdtemp(prefix="helios-gate-")
     try:
         f = os.path.join(d, "export.yml")
-        authelia_cli("storage", "user", kind, "export", "--file", f)
+        try:
+            authelia_cli("storage", "user", kind, "export", "--file", f)
+        except RuntimeError as e:
+            if "no data to export" in str(e):
+                return []   # Authelia 4.39 treats an empty export as an error
+            raise
         return export_rows(read_plain(f))
     finally:
         shutil.rmtree(d, ignore_errors=True)
