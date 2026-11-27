@@ -90,9 +90,9 @@ let common = import ./common.nix; in
         iot.succeed(f"{send} {trusted_ip} spoofed-flow")
         iot.succeed(f"ip addr del {trusted_ip}/32 dev vlan40")
         time.sleep(2)
-        log = isp.succeed("cat /tmp/udp.log")
-        assert "legit-flow" in log, f"trusted's own UDP flow didn't reach the internet: {log!r}"
-        assert "spoofed-flow" not in log, "a spoofed packet rode trusted's open connection out of iot"
+        udp_seen = isp.succeed("cat /tmp/udp.log")
+        assert "legit-flow" in udp_seen, f"trusted's own UDP flow didn't reach the internet: {udp_seen!r}"
+        assert "spoofed-flow" not in udp_seen, "a spoofed packet rode trusted's open connection out of iot"
 
     with subtest("taking a permission away cuts connections that are already open"):
         # trusted reaches iot; open a TCP connection, then remove that rule live
