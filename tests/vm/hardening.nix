@@ -156,7 +156,11 @@ in
             feed = f"printf '%s\\n' '{password}'" + (f"; sleep 1; printf '%s\\n' '{code}'" if code is not None else "")
             return router.execute(f"({feed}) | pamtester cockpit admin authenticate 2>&1")[0] == 0
         def ctl(cmd, stdin=""):
-            return json.loads(router.succeed(f"printf '%s' '{stdin}' | helios-ctl {cmd}"))
+            # helios-ctl exits 1 when it refuses (JSON "ok": false), so read the answer either way
+            status, output = router.execute(f"printf '%s' '{stdin}' | helios-ctl {cmd}")
+            res = json.loads(output)
+            assert (status == 0) == bool(res.get("ok")), (cmd, status, output)
+            return res
         def totp(secret):
             return router.succeed(f"oathtool --totp -b {secret}").strip()
 
