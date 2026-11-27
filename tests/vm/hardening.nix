@@ -243,7 +243,8 @@ in
             raise Exception(why)
         # Not required yet: Cockpit straight through (its login page)
         try:
-            router.wait_until_succeeds(f"curl -sk --resolve {fqdn}:9090:127.0.0.1 {base}/ | grep -qi cockpit", timeout=60)
+            # (to a file first: `curl | grep -q` fails under pipefail when grep stops reading early)
+            router.wait_until_succeeds(f"curl -sk --resolve {fqdn}:9090:127.0.0.1 -o /tmp/page {base}/ && grep -qi cockpit /tmp/page", timeout=60)
         except Exception:
             dump("Cockpit didn't come through Caddy")
         code, _ = curl("/auth/")
@@ -270,7 +271,7 @@ in
         # Password + code at the gate (Authelia's API, as its sign-in page uses it)
         def api(path, body):
             return router.succeed(f"curl -sk --resolve {fqdn}:9090:127.0.0.1 -b {jar} -c {jar} -H 'Content-Type: application/json' -d '{body}' {base}/auth/api/{path}")
-        router.wait_until_succeeds(f"curl -sk --resolve {fqdn}:9090:127.0.0.1 -c {jar} -H 'Content-Type: application/json' -d '{json.dumps({'username': 'admin', 'password': 'wrong-password-9', 'keepMeLoggedIn': False})}' {base}/auth/api/firstfactor | grep -q KO", timeout=30)
+        router.wait_until_succeeds(f"curl -sk --resolve {fqdn}:9090:127.0.0.1 -c {jar} -H 'Content-Type: application/json' -d '{json.dumps({'username': 'admin', 'password': 'wrong-password-9', 'keepMeLoggedIn': False})}' -o /tmp/ff {base}/auth/api/firstfactor && grep -q KO /tmp/ff", timeout=30)
         r = api("firstfactor", json.dumps({"username": "admin", "password": pw, "keepMeLoggedIn": False}))
         assert '"OK"' in r, r
         code, _ = curl("/", f"-b {jar}")
