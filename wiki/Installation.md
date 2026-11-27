@@ -70,7 +70,7 @@ It then prints a summary. Nothing is written until you type the disk's name to c
 
 The installed router follows `github:helios-router/helios` for updates. Unless you chose to download updates, its `flake.lock` starts pinned to the exact HeliOS and nixpkgs versions on the image, and those sources are copied onto the router, so it can rebuild before it ever goes online; `nix flake update` moves it to the latest. The boot loader is systemd-boot.
 
-The installer ends by recommending a second factor, and says which: **passkeys are HeliOS's preferred second factor** (a FIDO2 key with a PIN, or a phone). Set it up after the first sign-in under Photosphere → Advanced (step by step in [Passkey Sign-In](Passkey-Sign-In)); a code from an authenticator app is the fallback.
+The installer ends by recommending a second factor, and says which: **passkeys are HeliOS's preferred second factor** (any passkey: built into a phone or computer, a password manager like Bitwarden, or a hardware key). Set it up after the first sign-in under Photosphere → Advanced (step by step in [Passkey Sign-In](Passkey-Sign-In)); a code from an authenticator app is the fallback.
 
 ### Recovery shell
 

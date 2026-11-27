@@ -213,9 +213,9 @@ Done. Remove the USB stick and reboot. Then:
   - Your config is in /etc/nixos (a git repo). Edit site.nix for anything not in Photosphere.
 
 Second factor — passkeys recommended:
-  Passkeys are HeliOS's preferred second factor. A FIDO2 key (YubiKey, pico-fido…)
-  or your phone checks its PIN and your touch, can't be phished, and means you type
-  the admin password only once. A code from an authenticator app also works, as a
+  Passkeys are HeliOS's preferred second factor. Any passkey works: the one built
+  into your phone or computer, a password manager like Bitwarden, or a hardware key
+  (YubiKey, pico-fido…). It can't be phished, and you type the admin password once. A code from an authenticator app also works, as a
   fallback: it's weaker, and with the sign-in gate you type the password twice.
   $(if [ "$o_gate" = true ]; then echo "Set it up in Photosphere → Advanced → Admin account (Passkey sign-in)."; else echo "Turn on Passkey sign-in in Photosphere → Advanced → Services, then set it up under Admin account."; fi)
 DONE

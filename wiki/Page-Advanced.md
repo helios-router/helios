@@ -32,7 +32,7 @@ The rescue port's password SSH login (`helios.interfaces.rescueMac`) does not as
 
 **The full walkthrough, with per-device certificate instructions and troubleshooting, is [Passkey Sign-In](Passkey-Sign-In).** This section describes the card.
 
-An optional sign-in page (Authelia) in front of these pages. **Passkeys are HeliOS's recommended second factor**, and the card says so: a FIDO2 key (YubiKey, pico-fido…) or a phone checks its own PIN and your touch, can't be phished, and lets you type the admin password only once. A code from an authenticator app works as a fallback, but it can be phished and you type the password twice (at the gate and in Cockpit).
+An optional sign-in page (Authelia) in front of these pages. **Passkeys are HeliOS's recommended second factor**, and the card says so: any passkey (built into a phone or computer, a password manager like Bitwarden, or a hardware key like a YubiKey or pico-fido) checks it's you itself, can't be phished, and lets you type the admin password only once. A code from an authenticator app works as a fallback, but it can be phished and you type the password twice (at the gate and in Cockpit).
 
 | How you sign in | At the gate | In Cockpit |
 |---|---|---|

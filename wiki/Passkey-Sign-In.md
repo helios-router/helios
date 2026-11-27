@@ -4,18 +4,32 @@ An optional sign-in page in front of Photosphere (and the rest of Cockpit) that 
 
 This page explains how it works, walks through the setup, and covers what to do when something goes wrong. The short version of each step is also on the Passkey sign-in card in Photosphere → Advanced.
 
+## Any passkey works
+
+You don't need a hardware key. Whatever you already use for passkeys elsewhere works here:
+
+| Kind | Examples | Good to know |
+|---|---|---|
+| Built into your device or browser | Windows Hello, Apple Passwords / iCloud Keychain (Mac, iPhone), Google Password Manager (Android, Chrome) | Nothing to buy. Unlocks with your fingerprint, face or device PIN. Usually synced to your other devices through that account. |
+| A password manager | Bitwarden, 1Password, Proton Pass, KeePassXC | Works in any browser the manager runs in, and syncs everywhere it does. It asks you to verify (master password, PIN or biometrics) when you sign in. |
+| A hardware security key | YubiKey, pico-fido, Nitrokey, SoloKey | The strongest: the passkey can't be copied off the key, and you need the key itself plus its PIN. Buy two, or pair one with a synced passkey, so losing one isn't a problem. |
+
+All of them are far stronger than a code. The difference between them is what an attacker would need: a **hardware key** has to be stolen *and* its PIN known; a **synced passkey** is as safe as the account it syncs through (your Apple, Google, Microsoft or password-manager account), which is also what gets it back if you lose a device. HeliOS accepts all of them and doesn't restrict brands or models.
+
+The one requirement: whatever holds the passkey must **check it's you** when you sign in (a PIN, fingerprint, face, device unlock or master password). Every option above does; HeliOS insists on it (`user_verification: required`) so that the passkey alone, plus that check, counts as the second factor.
+
 ## Why passkeys
 
-A passkey here is a FIDO2 credential on a security key (YubiKey, pico-fido, Nitrokey, SoloKey…) or on your phone. Compared with a code:
+Compared with a code:
 
 | | Passkey (recommended) | Code from an app (fallback) |
 |---|---|---|
-| What you do | PIN and a touch at the sign-in page, then the admin password in Cockpit | Admin password and the code at the sign-in page, then the admin password again in Cockpit |
+| What you do | Confirm the passkey at the sign-in page (fingerprint, face, PIN or master password; a touch for a hardware key), then the admin password in Cockpit | Admin password and the code at the sign-in page, then the admin password again in Cockpit |
 | Admin password typed | once | twice |
-| Phishing | can't be phished: the key only answers the router's real sign-in page | a fake page can ask for the code and use it within 30 seconds |
+| Phishing | can't be phished: a passkey only answers the router's real sign-in page | a fake page can ask for the code and use it within 30 seconds |
 | Needs a trusted certificate | yes (see [step 2](#2-a-certificate-your-browsers-trust)) | no |
 
-The key's PIN is checked on the key itself; the router never sees it. The sign-in page requires it (`user_verification: required`), so a stolen key alone isn't enough.
+The PIN, fingerprint or master password is checked by your device, key or password manager; the router never sees it. The sign-in page requires that check, so a stolen key or unlocked laptop alone isn't enough.
 
 ## How it fits together
 
@@ -33,7 +47,8 @@ browser ──https──▶ Caddy :9090 ──▶ Authelia (the sign-in page, /
 
 ## Before you start
 
-* A FIDO2 key **with a PIN set** (set one with the key's own tool, or your browser offers to when you register), or a phone that does passkeys. Register two if you can: a spare key, or key + phone.
+* Somewhere to keep a passkey: your phone or computer (Windows Hello, Apple, Google), a password manager (Bitwarden, 1Password…), or a hardware key **with a PIN set** (set one with the key's own tool, or your browser offers to when you register). See [Any passkey works](#any-passkey-works).
+* Register two if you can (two devices, or a key plus your phone), so losing one isn't a lockout.
 * About 10 minutes.
 * Photosphere's gear (advanced mode) on: Advanced is where the card lives.
 
@@ -126,12 +141,12 @@ The sign-in page uses the same admin password as Cockpit. **Copy password** (ask
 1. Open the sign-in page (link in the dialog) and sign in with your admin login name and the admin password.
 2. **Settings** (top right) → **Two-Factor Authentication** → under **WebAuthn Credentials** (Authelia's name for passkeys) → **Add**, and give it a name like "pico-fido".
 3. The sign-in page asks for a **one-time code** to confirm it's you. Press **Show latest code** in the Photosphere dialog and type it in. (Authelia would normally e-mail it; on HeliOS it's written to a file on the router, which Photosphere reads.) Codes last 5 minutes.
-4. Your browser asks for the key: plug it in, tap it, or pick your phone. Enter the key's **PIN**, then **touch** it.
+4. Your browser offers where to save the passkey: this device (Windows Hello, Apple, Google), your password manager (Bitwarden etc. pop up here if they're installed), a phone (scan the QR code), or a security key (plug it in, enter its **PIN**, then **touch** it). Pick one and confirm with your fingerprint, face, PIN or master password.
 5. Press **Done** in Photosphere. The passkey is listed with when it was last used.
 
 Repeat for a second key or your phone.
 
-**pico-fido and other DIY keys** work: HeliOS doesn't restrict keys to certified models. The passkey is stored on the key ("discoverable"), which is what lets you sign in without typing a username; keys hold a limited number of these, but one per router is fine.
+**Password managers:** keep the extension unlocked while registering; if the browser's own dialog appears instead, choose the password manager there (or turn on its "use as passkey provider" setting). **Hardware keys, including DIY ones like pico-fido**, work: HeliOS doesn't restrict keys to certified models. The passkey is stored on the key ("discoverable"), which is what lets you sign in without typing a username; keys hold a limited number of these, but one per router is fine.
 
 ### 5. A code as fallback (optional)
 
@@ -139,14 +154,14 @@ Repeat for a second key or your phone.
 
 ### 6. Try it
 
-Open the sign-in page in a private window → **Sign in with a passkey** → PIN and touch. You should land on a signed-in page. If you don't, see [troubleshooting](#troubleshooting) before going on.
+Open the sign-in page in a private window → **Sign in with a passkey** → confirm with your fingerprint, face, PIN or master password (and touch the key, for a hardware key). You should land on a signed-in page. If you don't, see [troubleshooting](#troubleshooting) before going on.
 
 ### 7. Require it
 
 **Require it at sign-in** (asks for the admin password). From now on:
 
 * Go to `https://<your sign-in name>:9090`. Other names and addresses redirect there.
-* Sign in with the passkey, then Cockpit asks for the admin password. That's it.
+* Sign in with the passkey (one confirmation on your device, password manager or key), then Cockpit asks for the admin password. That's it.
 * No passkey to hand: on the sign-in page use your password and a code instead.
 * If Cockpit itself was asking for a code (the older setting in the Admin account card), that's retired now; the sign-in page asks instead.
 
@@ -154,7 +169,7 @@ Open the sign-in page in a private window → **Sign in with a passkey** → PIN
 
 ## Daily use and changes
 
-* Remove a passkey (lost key): Advanced → Passkey sign-in → **Remove**. The last second factor can't be removed while sign-in is required.
+* Remove a passkey (lost key or device): Advanced → Passkey sign-in → **Remove**. The last second factor can't be removed while sign-in is required.
 * New phone for the code: **Remove code**, then **Set up code** again.
 * Every change asks for the admin password, so an unlocked browser can't change your sign-in.
 
@@ -171,12 +186,13 @@ In order of convenience:
 
 | Symptom | Cause and fix |
 |---|---|
-| "Passkeys aren't available" / the browser doesn't offer the key | The page's certificate isn't trusted on this device: do [step 2](#2-a-certificate-your-browsers-trust). With your own name, check the certificate step is green. |
+| "Passkeys aren't available" / the browser doesn't offer a passkey | The page's certificate isn't trusted on this device: do [step 2](#2-a-certificate-your-browsers-trust). With your own name, check the certificate step is green. |
 | Certificate warning on the sign-in page | Same. With your own name: the step's text says whether the router is waiting for Let's Encrypt or using its own certificate. |
 | Token refused ("Caddy wouldn't start with that token…") | It wasn't the right kind of token: Cloudflare needs an API **token** (not the global API key) with the two permissions above; deSEC needs a token from Token management. The router's own certificate is back in use meanwhile. |
 | Certificate step stays on "Waiting for Let's Encrypt" | Check the router has internet. deSEC takes about 4 minutes. With Cloudflare, check the token's zone is the one your name is in. `journalctl -u caddy` on the router says what Let's Encrypt answered. |
 | No one-time code when adding a passkey | Ask for a new code on the sign-in page, then **Show latest code** again. |
-| "Sign in with a passkey" doesn't find the key | The passkey wasn't stored on the key: remove it and add it again. Some keys need their PIN set first. |
+| "Sign in with a passkey" doesn't find the passkey | For a password manager: unlock it first. For a hardware key: the passkey wasn't stored on the key; remove it and add it again (some keys need their PIN set first). |
+| Registration fails with "user verification" | The device or key couldn't check it's you: set a PIN on the key, or a screen lock / Windows Hello PIN on the device. |
 | Redirected to a name that doesn't resolve | Your device isn't using the router's DNS (VPN, Private DNS on Android, a manual DNS server). Use the router's DNS, or the rescue port. |
 
 ## Under the hood

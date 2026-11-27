@@ -102,7 +102,7 @@
         "authelia-helios",
         "caddy"
       ],
-      "desc": "Sign in to these pages with a passkey (a FIDO2 key such as a YubiKey or pico-fido, or your phone) on top of the admin password. Passkeys are the recommended second factor; a 6-digit code works as a fallback. Set it up in Advanced → Admin account once it's on."
+      "desc": "Sign in to these pages with a passkey (built into your phone or computer, a password manager like Bitwarden, or a hardware key) on top of the admin password. Passkeys are the recommended second factor; a 6-digit code works as a fallback. Set it up in Advanced → Admin account once it's on."
     },
     "logwatch": {
       "group": "optional",

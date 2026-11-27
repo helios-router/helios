@@ -2236,7 +2236,7 @@ function accountCard(r, reload, g) {
 // admin password is typed once (in Cockpit). A code is the fallback: password and
 // code at the gate, then the password again in Cockpit.
 const PASSKEY_WHY = [h("strong", {}, "Passkeys are HeliOS's recommended second factor. "),
-  "A FIDO2 key (YubiKey, pico-fido…) or your phone checks its PIN and your touch, can't be phished, and lets you type the admin password just once. ",
+  "Any passkey works: the one built into your phone or computer, a password manager like Bitwarden, or a hardware key (YubiKey, pico-fido…). It can't be phished and lets you type the admin password just once. ",
   "A 6-digit code works as a fallback, but then you type the password twice (at the gate and in Cockpit), and codes can be phished."];
 
 function askPassword({ title, intro, okLabel, danger = false, submit }) {
@@ -2276,7 +2276,7 @@ function passkeyCard(g, reload, user) {
     return card("Passkey sign-in", h("span", { class: "muted small" }, "Off"),
       h("div", { class: "alert alert-info small" }, PASSKEY_WHY),
       h("p", {}, "Adds a sign-in page in front of these pages. Optional: it downloads Authelia (about 50 MB) at the next Apply; then set it up here, step by step."),
-      h("p", { class: "muted small" }, h("strong", {}, "You'll need: "), "a FIDO2 security key with a PIN (YubiKey, pico-fido, Nitrokey…) or a phone that does passkeys, and about 10 minutes. ", guideLink("Read the full guide")),
+      h("p", { class: "muted small" }, h("strong", {}, "You'll need: "), "somewhere to keep a passkey: your phone or computer (Windows Hello, Apple, Google), a password manager (Bitwarden, 1Password…), or a hardware key with a PIN. About 10 minutes. ", guideLink("Read the full guide")),
       err,
       h("div", { class: "card-actions" }, h("button", { class: "btn btn-primary btn-sm", onclick: () =>
         api("service-set", "gate", "on").then(() => { toast("Passkey sign-in turned on — apply to download and start it"); refreshPending(); reload(); }).catch(show) },
@@ -2303,7 +2303,7 @@ function passkeyCard(g, reload, user) {
           h("span", {}, k.description, k.discoverable ? null : h("span", { class: "muted small" }, " (not stored on the key)")),
           h("span", { class: "muted small" }, k.lastUsed ? `last used ${fmtAgo(Date.parse(k.lastUsed) / 1000)}` : "not used yet"),
           h("button", { class: "btn btn-link btn-sm", onclick: () => pwAct(`Remove "${k.description}"?`, "It won't open the sign-in page any more.", "Remove", "gate-passkey-remove", { kid: k.kid }, () => toast("Passkey removed"), true) }, "Remove"))))
-          : h("p", { class: "muted small" }, "None yet. Register at least two if you can (a spare key, or your phone), so losing one isn't a problem."),
+          : h("p", { class: "muted small" }, "None yet. Register two if you can (two devices, or a key and your phone), so losing one isn't a problem."),
         h("button", { class: "btn btn-primary btn-sm", disabled: !g.synced, title: g.synced ? null : "Copy the password first",
           onclick: () => addPasskeyDialog(gatePage, reload, user) }, "Add passkey")),
       gateStep(!!g.totp, "Code from an app — fallback",
@@ -2315,7 +2315,7 @@ function passkeyCard(g, reload, user) {
       gateStep(g.enforced, "Try it",
         h("p", { class: "muted small" }, "Before requiring it, check your passkey works: open the ",
           h("a", { href: gatePage, target: "_blank", rel: "noopener noreferrer" }, "sign-in page"),
-          " in a private window, choose “Sign in with a passkey”, enter the key's PIN and touch it. If you land on a “signed in” page, you're ready.")),
+          " in a private window, choose “Sign in with a passkey” and confirm it (fingerprint, face, PIN or master password). If you land on a “signed in” page, you're ready.")),
       gateStep(g.enforced, "Require it at sign-in",
         h("p", { class: "muted small" }, `Then sign in at ${g.url} (other addresses go there).`, g.rescue ? " The rescue port skips it: admin password only." : "",
           g.legacyTotp ? " The code Cockpit asks for now is retired at the same time; the gate takes over." : ""),
@@ -2392,13 +2392,13 @@ function addPasskeyDialog(gatePage, reload, user) {
         " (it opens in a new tab). Sign in with username ", h("strong", { class: "mono" }, user || "your admin login"), " and the admin password."),
       h("li", {}, "Open ", h("strong", {}, "Settings"), " (top right) → ", h("strong", {}, "Two-Factor Authentication"),
         ". Under ", h("strong", {}, "WebAuthn Credentials"), " (that's what Authelia calls passkeys), choose ", h("strong", {}, "Add"),
-        " and give it a name you'll recognise, like “pico-fido” or “Pixel”."),
+        " and give it a name you'll recognise, like “Bitwarden”, “Pixel” or “pico-fido”."),
       h("li", {}, "It asks for a one-time code to confirm it's you. Press the button and type in the code:", codeBox,
         h("button", { class: "btn btn-secondary btn-sm", onclick: fetchCode }, "Show latest code"),
         h("div", { class: "muted small" }, "Codes last 5 minutes. No code? Ask for a new one on the sign-in page, then press the button again.")),
-      h("li", {}, "Your browser asks for the key: plug it in (or tap it, or pick your phone), enter the key's PIN, then touch it."),
+      h("li", {}, "Your browser offers where to save it: this device, your password manager, your phone, or a security key (plug it in, enter its PIN, touch it). Confirm with your fingerprint, face, PIN or master password."),
       h("li", {}, "Back here, press ", h("strong", {}, "Done"), ". The passkey shows in the list. Then do “Try it”.")),
-    h("p", { class: "muted small" }, "The key's PIN is checked on the key itself; the router never sees it. Browser says passkeys aren't available? The certificate step isn't done on this device."),
+    h("p", { class: "muted small" }, "Your PIN, fingerprint or master password is checked by your device, password manager or key; the router never sees it. Browser says passkeys aren't available? The certificate step isn't done on this device."),
     err],
   foot: close => [h("button", { class: "btn btn-primary", onclick: close }, "Done")] });
 }

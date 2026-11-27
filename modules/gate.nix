@@ -197,7 +197,9 @@ in
       webauthn = {
         display_name = "HeliOS (${cfg.hostName})";
         enable_passkey_login = true;
-        # A passkey that checked its PIN or biometric satisfies two_factor on its own
+        # Any passkey (device, password manager or hardware key: no brand or model
+        # restriction, synced passkeys allowed) that checked it is you (PIN, biometric,
+        # master password) satisfies two_factor on its own
         experimental_enable_passkey_uv_two_factors = true;
         attestation_conveyance_preference = "none";   # DIY keys (pico-fido) aren't in FIDO's metadata
         selection_criteria = {
