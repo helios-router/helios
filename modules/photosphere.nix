@@ -12,12 +12,16 @@ let
     git iproute2 nftables iputils vnstat nix systemd coreutils ntfy-sh
     # Remote access: OpenVPN PKI and proxy passwords, WireGuard keys, client QR codes
     openssl wireguard-tools qrencode openvpn
+    # Admin account: chpasswd (only on the system path with mutable users)
+    shadow
   ] ++ lib.optional cfg.tailscale.enable config.services.tailscale.package)
     + ":/run/current-system/sw/bin";
 
   helios-ctl = pkgs.writeShellScriptBin "helios-ctl" ''
     export PATH=${runtimePath}:$PATH
     export HELIOS_SELF=/run/current-system/sw/bin/helios-ctl
+    # Admin account: checks the current password against its shadow hash
+    export HELIOS_LIBCRYPT=${lib.getLib pkgs.libxcrypt}/lib/libcrypt.so.2
     exec ${pkgs.python3.withPackages (ps: [ ps.bcrypt ])}/bin/python3 ${../pkgs/helios-ctl.py} "$@"
   '';
 

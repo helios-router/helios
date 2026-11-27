@@ -1,7 +1,8 @@
-# helios-install, plus (for the offline image) everything an install needs
-# without a network: prebuilt HeliOS systems, the build tools to turn the
-# installer's answers into the final system, and the exact HeliOS and nixpkgs
-# sources with a flake.lock pinned to them. Used by iso.nix and the VM test.
+# helios-install, plus everything an install needs without a network: prebuilt
+# HeliOS systems, the build tools to turn the installer's answers into the final
+# system, and the exact HeliOS and nixpkgs sources with a flake.lock pinned to
+# them. (offlinePaths is empty only for the pure `nix flake check` evaluation.)
+# Used by iso.nix and the VM test.
 { heliosSrc, nixpkgsSrc, offlinePaths ? [ ] }:
 { config, lib, pkgs, ... }:
 

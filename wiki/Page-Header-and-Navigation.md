@@ -76,7 +76,7 @@ The bar refreshes every 5 seconds and after every save, and it is hidden when th
 
 What it does **not** cover:
 
-- Some actions happen immediately and never show up as pending: closing UPnP ports, printer test pages, pausing and cancelling print jobs, rotating or importing the WireGuard server key, creating or removing stored secrets (VPN configs, logins, proxy passwords), starting a model download, backing up, rebooting.
+- Some actions happen immediately and never show up as pending: closing UPnP ports, printer test pages, pausing and cancelling print jobs, rotating or importing the WireGuard server key, creating or removing stored secrets (VPN configs, logins, proxy passwords), starting a model download, backing up, rebooting, changing the admin password, turning two-factor sign-in on or off.
 - Pausing and resuming a device is committed right away when nothing else is pending. If other edits are already pending, the pause is part of them instead.
 - Discard only reverts the settings file. Secret files that were written immediately are not undone.
 

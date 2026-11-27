@@ -51,7 +51,7 @@ version or reproduce. HeliOS takes the NixOS approach:
 | **Hubble** | monitoring: hardware watchdog and traffic statistics (an internet-outage monitor runs alongside Photosphere) |
 | **Discovery** | optional AI log triage: a small local language model reads warnings and notifies you about the worrying ones |
 | **Lagrange** | interfaces and VLANs: one trunk to the switch carries every network, plus the modem's VLAN |
-| **Airlock** | the way in for you: admin login, SSH with keys only, a password only on the physical rescue port |
+| **Airlock** | the way in for you: admin login with optional two-factor sign-in for Cockpit, SSH with keys only, a password only on the physical rescue port |
 | **Pioneer** | optional print server (CUPS), shared only to networks you allow |
 | **Rosetta** | drivers: detects hardware and turns on support you approve (UPS, LLDP), plus a weekly vulnerability scan |
 
@@ -90,9 +90,10 @@ points if you use Wi-Fi), and NixOS 25.11 or newer. Tailscale or a Headscale ser
 optional.
 
 **Installer:** build the ISO with `nix build --impure .#installer-iso` (or download it from a
-CI run on `main`), boot it and run `sudo helios-install`. No internet is needed: the
-image carries everything for a standard install. (`.#installer-iso-netinstall` is a
-much smaller image that downloads it all during the install instead.)
+CI run on `main`) and boot it: **Install HeliOS** starts the install wizard, and
+**Recovery shell** gives a root shell for repairing an installed router. No internet is
+needed: the image carries everything for a standard install. With internet, it offers
+to download the newest HeliOS and NixOS during the install instead.
 It asks for the disk, filesystem, hostname, admin user, trunk port and optional
 services, writes `/etc/nixos` as a git repository and installs. Nothing is erased
 until you type the disk's name.

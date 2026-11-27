@@ -24,13 +24,24 @@ track `main` through the flake, and the commit hash is the version.
   dependencies are pinned. (#2)
 
 ### Added
-- Offline installer ISO (now the default), plus a netinstall image. Backups are
-  redacted. (#7)
+- Admin account card (Photosphere → Advanced): change the admin password and turn on
+  two-factor sign-in (TOTP) for Cockpit, with one-use recovery codes. Changes
+  need the current password or code. The hardening VM test signs in through
+  Cockpit's PAM service.
+- Installer boot menu: **Install HeliOS** starts the install wizard directly;
+  **Recovery shell** boots to a root shell with `helios-mount` for repairing an
+  installed router.
+- Offline installer ISO. Backups are redacted. (#7)
 - Fuzzing of `helios-ctl`'s upload parsers and settings validators
   (ClusterFuzzLite). (#6)
 - CodeQL code-quality rules alongside the security ones. (#5)
 - A NixOS VM test of the router: DHCP, NAT and isolation between networks.
 - Hubble: a hardware-agnostic watchdog with a softdog fallback.
+
+### Changed
+- One installer image: the netinstall image is gone. The offline image installs with
+  no network as before and, when it finds internet, offers to download updates
+  (newest HeliOS and NixOS) during the install.
 
 ### Fixed
 - miniupnpd boot race.

@@ -1,6 +1,30 @@
 # Advanced tab
 
-Administration and settings most people never need. This tab is only visible in advanced mode (gear button, see [Header and navigation](Page-Header-and-Navigation)). Cards, top to bottom: Services, Maintenance, AI log triage (only while that service is on), System, Backups, Drivers, Security scan.
+Administration and settings most people never need. This tab is only visible in advanced mode (gear button, see [Header and navigation](Page-Header-and-Navigation)). Cards, top to bottom: Admin account, Services, Maintenance, AI log triage (only while that service is on), System, Backups, Drivers, Security scan.
+
+## Admin account card
+
+The router login you chose in the installer (`helios.admin.user`). Changes here take effect at once: there is nothing to apply.
+
+| Row | Shows |
+|---|---|
+| Login | The admin user name |
+| Password set | When the password was last changed |
+| Two-factor sign-in | On or off. "Set up, but not asked for" (with a red warning) means the key exists but the running system version doesn't ask for it, for example after rolling back to a generation from before two-factor sign-in existed |
+| SSH keys | How many keys `site.nix` authorizes (`helios.admin.sshKeys`; edit them there) |
+
+* **Change password**: asks for the current password, then the new one (12–128 characters) twice. Used for Cockpit, `sudo` and the console. Your Cockpit session stays signed in. Hidden if the router sets passwords in its Nix configuration (`users.mutableUsers = false`); change them there.
+* **Turn on two-factor sign-in**: scan the QR code (or type the key) into an authenticator app, then enter the 6-digit code it shows. Nothing changes until that code matches. You then get five one-use recovery codes, shown once; save or download them. From then on Cockpit asks for a code after the password.
+* **Move to a new phone**: asks for a current code from the old phone (or a recovery code), then the same setup with a new key. The old app keeps working until you finish.
+* **Turn off**: asks for a current code (or a recovery code); then Cockpit asks for the password only again.
+
+Asking for the current password or code means an unlocked browser or a stolen Cockpit session can't change your sign-in. A recovery code used here is used up, as it would be at sign-in.
+
+Two-factor sign-in covers Cockpit (and so Photosphere). SSH only accepts keys, and the console and Cockpit's administrative access (`sudo`) keep the password alone, so a lost phone can't lock you out of the router itself. The key is stored root-only in `/var/lib/helios/totp/<login>`; deleting that file (over SSH, on the console, or from the installer's [Recovery shell](Installation#recovery-shell)) turns two-factor sign-in off.
+
+At sign-in, Cockpit checks the password first and only asks for the code when the password is right. The code allows 3 tries per 30 seconds; wrong passwords don't count toward that, so nobody can keep you locked out by guessing passwords.
+
+The rescue port's password SSH login (`helios.interfaces.rescueMac`) does not ask for the code either. It needs someone plugged in at the router, who could use the console just as well.
 
 ## Services card
 
@@ -128,7 +152,8 @@ Result of the weekly vulnerability scan (if the service is on): total findings, 
 
 ## Under the hood
 
-- `pkgs/photosphere/photosphere.js:2201-2247`: `viewAdvanced()`; `:1953-1977` `servicesCard`; `:1979-2054` `logwatchCard`; `:2082-2103` `maintenanceCard`; `:1298-1329` Drivers and Security cards.
+- `pkgs/photosphere/photosphere.js:2316-2362`: `viewAdvanced()`; `:2203-2314` `accountCard`, `currentCodeDialog`, `passwordDialog`, `totpSetup`, `recoveryDialog`; `:1952-1974` `servicesCard`; `:1978-2052` `logwatchCard`; `:2082-2102` `maintenanceCard`; `:1297-1327` Drivers and Security cards.
+- `pkgs/helios-ctl.py:4315-4528`: `account`, `account-password`, `account-2fa-begin`, `account-2fa-enable`, `account-2fa-disable`; `modules/airlock.nix:34-50` (Cockpit PAM with `pam_google_authenticator`).
 - `pkgs/services.json`: service catalog. `pkgs/helios-ctl.py:1517-1572`: `services`, `service-set`; `modules/options.nix:11-21` defaults.
 - `pkgs/helios-ctl.py:1069-1170`: reboot status, `maintenance-set`, `reboot`, `reboot-window`, `reboot-check`; `modules/recovery.nix:47-93`.
 - `pkgs/helios-ctl.py:1244-1510`: AI log triage commands; `pkgs/logwatch-models.json` (presets, defaults); `pkgs/logwatch.sh`; `modules/discovery.nix`.

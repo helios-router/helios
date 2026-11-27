@@ -38,7 +38,7 @@ PRs opened with the default `GITHUB_TOKEN` do not trigger CI. The workflow there
 | `nix flake check` | Builds the example system (the site template with placeholders) and the installer system. |
 | `helios-ctl tests and lint` | Python 3.13: runs `tests/test_helios_ctl.py`, then ShellCheck on `installer/helios-install.sh`, `tests/*.sh` and `pkgs/*.sh`. |
 | `Photosphere in Firefox, WebKit, Chromium` | Starts the demo (`tests/demo.sh`) and runs `tests/browsers.cjs` with Playwright on phone and desktop sizes; uploads screenshots if it fails. |
-| `installer ISO` | Not on pull requests; after `nix flake check`, builds both ISOs (offline and netinstall) and uploads them as the `helios-installer-iso` and `helios-installer-iso-netinstall` artifact for 14 days. |
+| `installer ISO` | Not on pull requests; after `nix flake check`, builds the installer ISO and uploads it as the `helios-installer-iso` artifact for 14 days. |
 
 Other scans:
 
@@ -105,6 +105,7 @@ Report it privately through GitHub: on the repository, open Security, then Repor
 ## Hardening built into a router
 
 * SSH: keys only, no root login, 3 attempts, never exposed on the WAN; password login exists only on the rescue port address.
+* Cockpit sign-in can require a one-time code from an authenticator app (Photosphere → Advanced → Admin account), with one-use recovery codes. The password is checked first, so wrong passwords don't use up the code's rate limit (3 tries per 30 seconds). Turning it off, moving it to a new phone or changing the password needs the current code or password, not just a signed-in session. SSH, `sudo` and the console are not affected, so a lost phone cannot lock you out; the rescue port's password SSH skips the code too (it needs physical access).
 * The router's admin ports (SSH, Cockpit, AdGuard) are reachable only from admin networks, Tailscale and the rescue port. Probes from other networks are dropped and notified.
 * Notifications are deny-all; the router publishes with a write-only token, phones log in with a read-only account. Both are generated on first boot and never enter the Nix store.
 * Kernel hardening sysctls (rp_filter, no redirects, no source routing, SYN cookies, restricted dmesg and kernel pointers).

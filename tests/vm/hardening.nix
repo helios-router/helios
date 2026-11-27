@@ -5,7 +5,11 @@
 #    localhost, and the model folder is put back to owner-only;
 #  - Remote access: OpenVPN and 3proxy run as their own accounts in the
 #    Heliosphere container, the CRL and the proxy users file belong to them
-#    (and nobody else can read them), and a LAN client can use the proxy.
+#    (and nobody else can read them), and a LAN client can use the proxy;
+#  - Admin account: Cockpit's PAM service asks for the password, then a TOTP
+#    code once two-factor sign-in is on (set up through helios-ctl, as
+#    Photosphere does); wrong passwords stop before the code's rate limit;
+#    recovery codes work once; changes need the current password or code.
 { self }:
 
 let
@@ -20,9 +24,11 @@ in
     trusted = common.client 20;
     blocked = common.client 20;
 
-    router = { config, lib, nodes, ... }: {
+    router = { config, lib, nodes, pkgs, ... }: {
       imports = [ (common.router self) ];
       virtualisation.memorySize = 3072;
+      # Sign in through Cockpit's PAM service from the shell; compute TOTP codes
+      environment.systemPackages = [ pkgs.pamtester pkgs.oath-toolkit ];
       helios.logwatch.enable = lib.mkOverride 40 true;
       helios.heliosphere.enable = lib.mkOverride 40 true;
       # Client configs need a host to point at (the WAN address would do, with a warning)
@@ -52,6 +58,7 @@ in
 
   testScript = { nodes, ... }: common.leaseHelper + ''
     import json
+    import time
 
     def container(cmd):
         return router.succeed(f"nixos-container run heliosphere -- {cmd}")
@@ -142,5 +149,61 @@ in
             raise
         trusted.succeed("curl -fsS --max-time 15 --socks5-hostname tester:${proxyPassword}@10.60.0.2:1080 http://192.0.2.1/ | grep -q helios-test-internet")
         trusted.fail("curl -fsS --max-time 15 --socks5-hostname tester:wrong-password-here@10.60.0.2:1080 http://192.0.2.1/")
+
+    with subtest("Admin account: Cockpit sign-in with two-factor"):
+        def login(password, code=None):
+            # pamtester answers one prompt per line; the pause keeps the code for the second prompt
+            feed = f"printf '%s\\n' '{password}'" + (f"; sleep 1; printf '%s\\n' '{code}'" if code is not None else "")
+            return router.execute(f"({feed}) | pamtester cockpit admin authenticate 2>&1")[0] == 0
+        def ctl(cmd, stdin=""):
+            # helios-ctl exits 1 when it refuses (JSON "ok": false), so read the answer either way
+            status, output = router.execute(f"printf '%s' '{stdin}' | helios-ctl {cmd}")
+            res = json.loads(output)
+            assert (status == 0) == bool(res.get("ok")), (cmd, status, output)
+            return res
+        def totp(secret):
+            return router.succeed(f"oathtool --totp -b {secret}").strip()
+
+        pam = router.succeed("cat /etc/pam.d/cockpit")
+        print(pam)
+        assert "pam_google_authenticator.so" in pam and "secret=/var/lib/helios/totp/" in pam, "no TOTP in Cockpit's PAM"
+        assert any("requisite" in l and "pam_unix.so" in l for l in pam.splitlines()), "password isn't checked first"
+        assert owner_mode("/var/lib/helios/totp") == "700 root"
+
+        router.succeed("echo 'admin:first-password-1' | chpasswd")
+        assert login("first-password-1"), "password-only sign-in failed with two-factor off"
+        assert not login("wrong-password-1")
+
+        # Turn it on as Photosphere does (qrencode must be on helios-ctl's PATH)
+        b = ctl("account-2fa-begin")
+        assert b["ok"] and b["qrSvg"] and "<svg" in b["qrSvg"], b
+        secret = b["secret"]
+        r = ctl("account-2fa-enable", totp(secret))
+        assert r["ok"], r
+        recovery = r["recoveryCodes"]
+        assert owner_mode("/var/lib/helios/totp/admin") == "400 root"
+        st = ctl("account")
+        assert st["totp"] and st["totpEnforced"], st
+
+        key = "/var/lib/helios/totp/admin"
+        assert not login("first-password-1"), "signed in without a code"
+        before = router.succeed(f"cat {key}")   # the try above updated its rate-limit line
+        assert not login("wrong-password-1", totp(secret))
+        assert router.succeed(f"cat {key}") == before, "a wrong password reached the code check (rate limit)"
+        assert not login("first-password-1", "000000" if totp(secret) != "000000" else "111111")
+        assert login("first-password-1", totp(secret)), "password + code failed"
+
+        time.sleep(31)   # past the code's rate limit (3 tries / 30 s)
+        assert login("first-password-1", recovery[0]), "recovery code failed"
+        assert not login("first-password-1", recovery[0]), "a recovery code worked twice"
+
+        # Changes need proof beyond the session
+        assert not ctl("account-2fa-disable", "12345678")["ok"]
+        assert not ctl("account-password", json.dumps({"current": "wrong-password-1", "new": "second-password-2"}))["ok"]
+        r = ctl("account-password", json.dumps({"current": "first-password-1", "new": "second-password-2"}))
+        assert r["ok"], r   # libcrypt checked the yescrypt hash
+        assert ctl("account-2fa-disable", recovery[1])["ok"]
+        assert not ctl("account")["totp"]
+        assert login("second-password-2"), "password-only sign-in failed after turning two-factor off"
   '';
 }
