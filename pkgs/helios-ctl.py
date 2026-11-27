@@ -209,6 +209,8 @@ def read_json(path, default=None):
 
 
 def give_to(path, user):
+    # `path` may be an open file descriptor: then the owner changes on that very file,
+    # even if someone who can write its folder swaps the name for a link meanwhile
     """Hand a file or folder to the one service account that reads it, so it can be 0400/0700
     instead of readable by a group or everyone. Only root can do it; if the account doesn't exist
     yet (that service is off), it stays root's and the module's tmpfiles rules fix it up later."""
@@ -222,12 +224,28 @@ def give_to(path, user):
 
 
 def write_json(path, obj):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(obj, f, indent=2)
-        f.write("\n")
-    os.replace(tmp, path)
+    """Write atomically through a fresh temp file. Some of these files live in a
+    service account's own folder (helios-detect's StateDirectory): a fixed
+    "<name>.tmp" there could be a link planted to make root overwrite any file."""
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    try:
+        mode = os.stat(path, follow_symlinks=False).st_mode & 0o777
+    except OSError:
+        mode = 0o644
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".helios-")
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w") as f:
+            json.dump(obj, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass   # already gone; the original error is what matters
+        raise
 
 
 def now():
@@ -868,6 +886,9 @@ def cmd_discard(a):
 def cmd_restore(a):
     """Load the state file from an older commit as a pending change (OPNsense config-history style)."""
     git_ready()
+    # A commit id only: anything else (an "--output=…" option) would reach git as such
+    if not re.fullmatch(r"[0-9a-f]{4,64}", a.rev or ""):
+        fail("bad revision")
     r = git("show", f"{a.rev}:{STATE_NAME}", check=False)
     if r.returncode != 0:
         fail(f"that version has no {STATE_NAME}")
@@ -1615,7 +1636,8 @@ if not PRN_CATALOG:
     except (OSError, ValueError, KeyError):
         PRN_CATALOG = {}
 PRINTERS_MANAGED = os.path.join(DATA_DIR, "printers-managed.json")
-PRINTER_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}\Z")
+# Never a leading "-": lp, lpadmin, cupsdisable and cancel would read it as an option
+PRINTER_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}\Z")
 URI_RE = re.compile(r"^(usb|ipp|ipps|dnssd|socket|lpd|http|https|hp|smb)://\S{1,500}\Z")
 MODEL_RE = re.compile(r"^\S{1,300}\Z")
 
@@ -1787,7 +1809,7 @@ def cmd_printer_pause(a):
 
 
 def cmd_print_cancel(a):
-    if not re.match(r"^[A-Za-z0-9_-]{1,64}-[0-9]{1,9}\Z", a.job):
+    if not re.match(r"^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}-[0-9]{1,9}\Z", a.job):
         fail("bad job id")
     r = run(["cancel", a.job], timeout=20)
     if r.returncode != 0:
@@ -3473,10 +3495,10 @@ def hs_write(path, data, mode=0o600, dirmode=0o755, owner=None):
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".helios-")
     try:
         os.fchmod(fd, mode)
+        if owner:
+            give_to(fd, owner)   # by descriptor, never by a name the container could swap
         with os.fdopen(fd, "w") as f:
             f.write(data)
-        if owner:
-            give_to(tmp, owner)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -4364,10 +4386,12 @@ def write_private(path, text, mode=0o600, owner=None):
     tmp = f"{path}.{os.getpid()}.tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
     try:
+        # Owner through the descriptor: the folder may be the owner's own (Authelia's
+        # 0700 state dir), and chown by name would follow a link it swapped in
+        if owner:
+            give_to(fd, owner)
         with os.fdopen(fd, "w") as f:
             f.write(text)
-        if owner:
-            give_to(tmp, owner)
         os.replace(tmp, path)
     except BaseException:
         try:

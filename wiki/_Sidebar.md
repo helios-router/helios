@@ -5,6 +5,7 @@
 * [Configuration](Configuration)
 * [Installation](Installation)
 * [Passkey Sign-In](Passkey-Sign-In)
+* [Wi-Fi Passwords and VLANs](Wi-Fi-Passwords-and-VLANs)
 * [Updates and Security](Updates-and-Security)
 * [Development](Development)
 

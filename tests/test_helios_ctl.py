@@ -1345,7 +1345,8 @@ class HeliosCtl(unittest.TestCase):
         with mock.patch.object(mod, "give_to") as give:
             mod.hs_write(os.path.join(self.tmp, "p", "users"), "tv:CR:x\n", 0o400, 0o700, "heliosphere-proxy")
         self.assertEqual(give.call_args.args[1], "heliosphere-proxy")
-        self.assertTrue(os.path.basename(give.call_args.args[0]).startswith(".helios-"))
+        # ...through its descriptor (an int), never a name the container could swap for a link
+        self.assertIsInstance(give.call_args.args[0], int)
         self.assertEqual(oct(os.stat(os.path.join(self.tmp, "p", "users")).st_mode & 0o777), "0o400")
 
     def test_remote_ovpn_add_revoke_with_real_openssl(self):
@@ -1906,6 +1907,63 @@ class HeliosCtl(unittest.TestCase):
         conf["admin"] = {"user": "../etc"}
         write_json(self.conf_path, conf)
         self.assertFalse(self.helios("account", ok=False)["ok"])
+
+    def load_module(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("helios_ctl_sec", CTL)
+        mod = importlib.util.module_from_spec(spec)
+        os.environ.update({k: v for k, v in self.env.items() if k.startswith(("HELIOS_", "STUB_")) or k == "PATH"})
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_security_write_json_never_follows_a_planted_link(self):
+        # A service account's folder (helios-detect's StateDirectory) holding a
+        # "<name>.tmp" link to a file root must not overwrite
+        mod = self.load_module()
+        victim = os.path.join(self.tmp, "victim")
+        with open(victim, "w") as f:
+            f.write("precious\n")
+        folder = os.path.join(self.tmp, "svc")
+        os.makedirs(folder)
+        target = os.path.join(folder, "hardware.json")
+        os.symlink(victim, target + ".tmp")
+        mod.write_json(target, {"ok": 1})
+        self.assertEqual(read_file(victim), "precious\n")
+        self.assertEqual(json.loads(read_file(target)), {"ok": 1})
+        self.assertFalse(os.path.islink(target))
+        # A link at the final name is replaced, never written through
+        os.unlink(target)
+        os.symlink(victim, target)
+        mod.write_json(target, {"ok": 2})
+        self.assertEqual(read_file(victim), "precious\n")
+        self.assertFalse(os.path.islink(target))
+        self.assertEqual([n for n in os.listdir(folder) if n.startswith(".helios-")], [])
+
+    def test_security_private_files_get_their_owner_by_descriptor(self):
+        # write_private / hs_write must hand the file over through its descriptor:
+        # chown by name would follow a link the folder's owner swapped in
+        mod = self.load_module()
+        seen = []
+        mod.give_to = lambda target, user: seen.append(target)
+        p = os.path.join(self.tmp, "gate", "users.yml")
+        mod.write_private(p, "users: {}\n", 0o600, owner="authelia-helios")
+        self.assertEqual(len(seen), 1)
+        self.assertIsInstance(seen[0], int, "write_private chowned by path")
+        self.assertEqual(read_file(p), "users: {}\n")
+        seen.clear()
+        mod.hs_write(os.path.join(self.tmp, "hs", "users"), "u:CR:x\n", 0o400, owner="heliosphere-proxy")
+        self.assertEqual(len(seen), 1)
+        self.assertIsInstance(seen[0], int, "hs_write chowned by path")
+
+    def test_security_argument_injection(self):
+        # restore: only a commit id reaches git (not "--output=/etc/x")
+        for rev in ("--output=/tmp/x", "-p", "HEAD~1", "abc def", ""):
+            self.assertIn("bad revision", self.helios("restore", "--", rev, ok=False)["error"])
+        # Printer names and job ids never start with "-" (an option to lp / cancel)
+        self.assertIn("bad job id", self.helios("print-cancel", "--", "-hevil-3", ok=False)["error"])
+        mod = self.load_module()
+        self.assertIsNone(mod.PRINTER_NAME_RE.match("-hevil"))
+        self.assertIsNotNone(mod.PRINTER_NAME_RE.match("office_laser-2"))
 
 
 if __name__ == "__main__":

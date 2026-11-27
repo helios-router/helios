@@ -126,7 +126,7 @@ The router carries every network as a tagged VLAN on one cable. Your switch must
 |---|---|
 | Modem's port | Untagged in the WAN VLAN (`helios.interfaces.wanVlan`, default 10). |
 | Router's trunk port | Tagged with every network's VLAN id (defaults: 20, 30, 40, 50, 99) and with the WAN VLAN. |
-| Access points' ports | Tagged with the VLANs their SSIDs use. Map each SSID to a network. |
+| Access points' ports | Tagged with the VLANs their SSIDs use. Map each SSID to a network, or give one SSID a password per network (see [Wi-Fi Passwords and VLANs](Wi-Fi-Passwords-and-VLANs)). |
 | Other ports | Untagged (access) in the VLAN of the network that device belongs on. |
 
 Use [Page-Hardware](Page-Hardware) to describe your switch and access points; HeliOS writes a per-device checklist you follow in the device's own web page. The VLAN ids must match the ones on the [Networks](Page-Networks) page.

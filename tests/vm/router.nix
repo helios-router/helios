@@ -18,6 +18,7 @@ let common = import ./common.nix; in
   };
 
   testScript = common.leaseHelper + ''
+    import time
 
     start_all()
 
@@ -76,6 +77,37 @@ let common = import ./common.nix; in
         trusted.succeed("nc -z -w 5 10.20.0.1 22")
         iot.fail("nc -z -w 5 10.40.0.1 22")
         iot.fail("nc -z -w 5 10.20.0.1 22")
+
+    with subtest("anti-spoofing comes before connection tracking"):
+        # trusted opens a UDP flow to the internet; iot then sends a packet that
+        # copies it (trusted's address and ports). Conntrack ignores the interface,
+        # so with "established" accepted first the copy would reach the internet.
+        isp.succeed("rm -f /tmp/udp.log; (timeout 60 python3 -u -c 'import socket\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\ns.bind((\"192.0.2.1\",9000))\nwhile True:\n d,a=s.recvfrom(99); print(d.decode(),flush=True)' > /tmp/udp.log 2>&1 &)")
+        time.sleep(1)
+        send = "python3 -c 'import socket,sys\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\ns.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\ns.bind((sys.argv[1],5000)); s.sendto(sys.argv[2].encode(),(\"192.0.2.1\",9000))'"
+        trusted.succeed(f"{send} {trusted_ip} legit-flow")
+        iot.succeed(f"ip addr add {trusted_ip}/32 dev vlan40")
+        iot.succeed(f"{send} {trusted_ip} spoofed-flow")
+        iot.succeed(f"ip addr del {trusted_ip}/32 dev vlan40")
+        time.sleep(2)
+        udp_seen = isp.succeed("cat /tmp/udp.log")
+        assert "legit-flow" in udp_seen, f"trusted's own UDP flow didn't reach the internet: {udp_seen!r}"
+        assert "spoofed-flow" not in udp_seen, "a spoofed packet rode trusted's open connection out of iot"
+
+    with subtest("taking a permission away cuts connections that are already open"):
+        # trusted reaches iot; open a TCP connection, then remove that rule live
+        # (as a rebuild would): the next data from trusted must not get through
+        iot.succeed("rm -f /tmp/tcp.log; (timeout 60 python3 -u -c 'import socket\ns=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind((\"0.0.0.0\",7000)); s.listen(1)\nc,_=s.accept()\nfor l in c.makefile(): print(l.strip(),flush=True)' > /tmp/tcp.log 2>&1 &)")
+        time.sleep(1)
+        trusted.succeed(f"(timeout 30 python3 -u -c 'import socket,time\ns=socket.create_connection((\"{iot_ip}\",7000)); s.sendall(b\"before\\n\")\nwhile not __import__(\"os\").path.exists(\"/tmp/go\"): time.sleep(0.1)\ns.sendall(b\"after\\n\"); time.sleep(3)' >/dev/null 2>&1 &)")
+        iot.wait_until_succeeds("grep -q before /tmp/tcp.log", timeout=15)
+        handle = router.succeed("nft -a list chain inet heliopause forward | grep 'iifname \"trusted\" accept' | sed 's/.*# handle //'").strip()
+        router.succeed(f"nft delete rule inet heliopause forward handle {handle}")
+        trusted.succeed("touch /tmp/go")
+        time.sleep(3)
+        assert "after" not in iot.succeed("cat /tmp/tcp.log"), "an open connection outlived the permission that allowed it"
+        router.succeed("systemctl restart nftables.service")
+        trusted.succeed(f"ping -c 2 -W 2 {iot_ip}")   # back as configured
 
     with subtest("ruleset contains the heliopause tables"):
         rules = router.succeed("nft list ruleset")
