@@ -5,6 +5,13 @@ on this repository, or go straight to
 <https://github.com/helios-router/helios/security/advisories/new>.
 Please don't open a public issue for it.
 
+## Security baseline
+
+[SECURITY_AUDIT.md](SECURITY_AUDIT.md) records the security boundaries, every audit
+finding with its severity and status, what was verified by design, and the regression
+test that covers each fix. Check a security-relevant change against it, and update it
+in the same pull request.
+
 ## How changes are guarded
 
 - Every pull request runs `.github/workflows/pr-guard.yml`: a diff scanner (hidden
