@@ -4,9 +4,18 @@
 # (Photosphere → Advanced → Admin account). The code's secret lives in
 # /var/lib/helios/totp/<user>, root-only; deleting that file turns it off
 # again (from SSH, the console or the installer's recovery shell).
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 
-let cfg = config.helios; in
+let
+  cfg = config.helios;
+  rescue = cfg.interfaces.rescueMac != null;
+  rescueNet = "${lib.concatStringsSep "." (lib.take 3 (lib.splitString "." cfg.interfaces.rescueAddress))}.0/24";
+  # pam_access: "allowed" = signing in from the rescue subnet
+  rescueAccess = pkgs.writeText "helios-rescue-access.conf" ''
+    + : ALL : ${rescueNet}
+    - : ALL : ALL
+  '';
+in
 {
   users.users.${cfg.admin.user} = {
     isNormalUser = true;
@@ -34,8 +43,9 @@ let cfg = config.helios; in
   # TOTP for Cockpit only: SSH is key-only, and Cockpit's "administrative access"
   # (sudo) and the console keep the password alone, so a lost phone never locks
   # you out of the box itself. allowNullOTP: no secret file = no code asked.
-  # The rescue port's password SSH (above) skips the code too: it needs someone
-  # at the router, who could also use the console.
+  # The rescue port skips the code: Cockpit there (and its password SSH, above)
+  # takes the admin password only. It needs someone at the router, who could
+  # also use the console.
   security.pam.services.cockpit = {
     googleAuthenticator = { enable = true; allowNullOTP = true; };
     # Check the password first and stop there if it's wrong (NixOS makes this
@@ -45,6 +55,15 @@ let cfg = config.helios; in
     rules.auth.google_authenticator.settings = {
       secret = "/var/lib/helios/totp/\${USER}";
       user = "root";
+    };
+    # From the rescue subnet, jump over the code check (the next rule). Cockpit
+    # sees the client's address directly, or from Caddy's X-Forwarded-For when
+    # the gate is on (Cockpit then listens on localhost only).
+    rules.auth.helios_rescue = lib.mkIf rescue {
+      order = config.security.pam.services.cockpit.rules.auth.google_authenticator.order - 1;
+      control = "[success=1 default=ignore]";
+      modulePath = "${config.security.pam.package}/lib/security/pam_access.so";
+      settings = { accessfile = "${rescueAccess}"; nodefgroup = true; };
     };
   };
   systemd.tmpfiles.rules = [ "d /var/lib/helios/totp 0700 root root -" ];

@@ -12,7 +12,7 @@
 | `docs/` | Design notes: `heliosphere.md` (remote access contract), `drivers.md` (driver design and the phase 1 interface). |
 | `wiki/` | Source of these wiki pages. |
 | `.github/` | Workflows, `scripts/pr-guard.py`, `dependabot.yml`, `CODEOWNERS`. |
-| `flake.nix` | `nixosModules.default`, the `templates.default` template, an `example` system and an `installer` system, `installer-iso` package, and `checks`. |
+| `flake.nix` | `nixosModules.default` (the modules, plus `heliosUnstable`: the pinned `nixpkgs-unstable` input's packages, used only where stable lacks a security fix, today Authelia), the `templates.default` template, an `example` system and an `installer` system, `installer-iso` package, and `checks`. |
 
 ## Architecture in one paragraph
 

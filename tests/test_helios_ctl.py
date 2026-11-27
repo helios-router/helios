@@ -124,6 +124,12 @@ class HeliosCtl(unittest.TestCase):
         conf["detectFile"] = os.path.join(self.tmp, "detect", "hardware.json")
         conf["solarWind"]["tokenFile"] = os.path.join(self.data, "solarwind-token")
         conf["admin"] = {"user": "admin", "sshKeys": 1, "totpDir": os.path.join(self.data, "totp")}
+        gate = os.path.join(self.tmp, "authelia")
+        conf["gate"] = {"enabled": True, "fqdn": "helios.home.arpa", "url": "https://helios.home.arpa:9090", "rescue": True,
+                        "gateDir": os.path.join(self.tmp, "gate"), "usersFile": os.path.join(gate, "users.yml"),
+                        "storageKeyFile": os.path.join(gate, "key"), "authelia": os.path.join(STUBS, "authelia"),
+                        "cliConfig": "/dev/null", "notifications": os.path.join(gate, "notifications.txt"),
+                        "caCert": os.path.join(gate, "root.crt"), "autheliaVersion": "4.39.28"}
         self.conf_path = os.path.join(self.tmp, "config.json")
         write_json(self.conf_path, conf)
         with open(os.path.join(self.cfg, "configuration.nix"), "w") as f:
@@ -159,7 +165,8 @@ class HeliosCtl(unittest.TestCase):
         NTFY["posts"] = []
         self.env = dict(os.environ, HELIOS_CONFIG=self.conf_path, HELIOS_DATA_DIR=self.data, HELIOS_FAKE_ROOT=self.fake,
                         HELIOS_NO_SYSTEMD="1", HELIOS_REBUILD=os.path.join(STUBS, "nixos-rebuild"),
-                        PATH=STUBS + ":" + os.environ["PATH"], HELIOS_UPS_SPOOL=os.path.join(self.tmp, "spool"), STUB_LOG=os.path.join(self.tmp, "stub.log"))
+                        PATH=STUBS + ":" + os.environ["PATH"], HELIOS_UPS_SPOOL=os.path.join(self.tmp, "spool"), STUB_LOG=os.path.join(self.tmp, "stub.log"),
+                        STUB_AUTHELIA_DB=os.path.join(self.tmp, "authelia-db.json"))
 
     def tearDown(self):
         shutil.rmtree(self.tmp)
@@ -1692,6 +1699,115 @@ class HeliosCtl(unittest.TestCase):
         r = self.helios("account-2fa-enable", stdin=self.totp(secret), ok=False)
         self.assertIn("expired", r["error"])
         self.assertFalse(os.path.exists(os.path.join(self.data, "totp", "admin")))
+
+    # ------------------------------------------------------------ sign-in gate
+    def gate_conf(self, **kw):
+        conf = load_json(self.conf_path)
+        conf["gate"].update(kw)
+        write_json(self.conf_path, conf)
+
+    def add_passkey(self, kid="k1", user="admin"):
+        p = self.env["STUB_AUTHELIA_DB"]
+        db = load_json(p) if os.path.exists(p) else {"webauthn": [], "totp": []}
+        db["webauthn"].append({"username": user, "kid": kid, "description": f"pico-fido {kid}", "created_at": "2026-11-27T10:00:00Z",
+                               "last_used_at": None, "discoverable": True, "verified": True})
+        write_json(p, db)
+
+    def gate_state(self):
+        return self.helios("gate")
+
+    def test_gate_off_service(self):
+        self.gate_conf(enabled=False)
+        r = self.gate_state()
+        self.assertFalse(r["enabled"])
+        self.assertEqual(r["passkeys"], [])
+        self.assertIn("Services", self.helios("gate-sync", stdin="{}", ok=False)["error"])
+        self.assertNotIn("authelia", self.stub_log())
+
+    def test_gate_sync_password_and_keep_in_step(self):
+        self.set_shadow("old-password-123")
+        self.assertFalse(self.gate_state()["synced"])
+        self.assertIn("wrong", self.helios("gate-sync", stdin=json.dumps({"current": "nope-nope-nope"}), ok=False)["error"])
+        self.helios("gate-sync", stdin=json.dumps({"current": "old-password-123"}))
+        users = read_file(os.path.join(self.tmp, "authelia", "users.yml"))
+        self.assertIn("  admin:\n", users)
+        h = re.search(r'password: "(\$6\$rounds=100000\$[^"]+)"', users).group(1)
+        import ctypes, ctypes.util
+        lib = ctypes.CDLL(ctypes.util.find_library("crypt"))
+        lib.crypt.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+        lib.crypt.restype = ctypes.c_char_p
+        self.assertEqual(lib.crypt(b"old-password-123", h.encode()).decode(), h)
+        self.assertEqual(os.stat(os.path.join(self.tmp, "authelia", "users.yml")).st_mode & 0o777, 0o600)
+        self.assertTrue(self.gate_state()["synced"])
+        # Changing the admin password changes the gate's too
+        self.helios("account-password", stdin=json.dumps({"current": "old-password-123", "new": "new-password-456"}))
+        h2 = re.search(r'password: "([^"]+)"', read_file(os.path.join(self.tmp, "authelia", "users.yml"))).group(1)
+        self.assertEqual(lib.crypt(b"new-password-456", h2.encode()).decode(), h2)
+
+    def test_gate_enforce_needs_password_copy_and_a_factor(self):
+        self.set_shadow("old-password-123")
+        pw = {"current": "old-password-123", "on": True}
+        self.assertIn("Copy the admin password", self.helios("gate-enforce", stdin=json.dumps(pw), ok=False)["error"])
+        self.helios("gate-sync", stdin=json.dumps(pw))
+        self.assertIn("passkey", self.helios("gate-enforce", stdin=json.dumps(pw), ok=False)["error"])
+        self.assertIn("wrong", self.helios("gate-enforce", stdin=json.dumps({**pw, "current": "x"}), ok=False)["error"])
+        self.add_passkey()
+        # The older code check in Cockpit is retired when the gate takes over
+        self.enable_2fa()
+        r = self.helios("gate-enforce", stdin=json.dumps(pw))
+        self.assertTrue(r["enforced"] and r["retiredCockpitCode"])
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "gate", "enforced")))
+        self.assertFalse(os.path.exists(os.path.join(self.data, "totp", "admin")))
+        st = self.gate_state()
+        self.assertTrue(st["enforced"])
+        self.assertEqual([k["kid"] for k in st["passkeys"]], ["k1"])
+        self.assertFalse(st["legacyTotp"])
+        # Off: with the password, or gate-off from a shell
+        self.helios("gate-enforce", stdin=json.dumps({**pw, "on": False}))
+        self.assertFalse(self.gate_state()["enforced"])
+        self.helios("gate-enforce", stdin=json.dumps(pw))
+        self.helios("gate-off")
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "gate", "enforced")))
+
+    def test_gate_last_factor_cant_be_removed_while_enforced(self):
+        self.set_shadow("old-password-123")
+        pw = {"current": "old-password-123"}
+        self.helios("gate-sync", stdin=json.dumps(pw))
+        self.add_passkey("k1")
+        self.helios("gate-enforce", stdin=json.dumps({**pw, "on": True}))
+        self.assertIn("last second factor", self.helios("gate-passkey-remove", stdin=json.dumps({**pw, "kid": "k1"}), ok=False)["error"])
+        self.assertIn("No such", self.helios("gate-passkey-remove", stdin=json.dumps({**pw, "kid": "zz"}), ok=False)["error"])
+        self.add_passkey("k2")
+        self.helios("gate-passkey-remove", stdin=json.dumps({**pw, "kid": "k1"}))
+        self.assertIn("authelia storage user webauthn delete --kid k1", self.stub_log())
+        self.assertEqual([k["kid"] for k in self.gate_state()["passkeys"]], ["k2"])
+        # A code as the fallback; then the passkey can go, but not the code too
+        b = self.helios("gate-totp-begin", stdin=json.dumps(pw))
+        self.assertTrue(b["uri"].startswith("otpauth://totp/"))
+        self.assertEqual(b["secret"], "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
+        self.assertFalse(self.helios("gate-totp-check", stdin="000000" if self.totp(b["secret"]) != "000000" else "111111", ok=False)["ok"])
+        self.helios("gate-totp-check", stdin=self.totp(b["secret"]))
+        self.assertTrue(self.gate_state()["totp"])
+        self.helios("gate-passkey-remove", stdin=json.dumps({**pw, "kid": "k2"}))
+        self.assertIn("last second factor", self.helios("gate-totp-remove", stdin=json.dumps(pw), ok=False)["error"])
+        self.assertIn("wrong", self.helios("gate-totp-begin", stdin=json.dumps({"current": "bad"}), ok=False)["error"])
+
+    def test_gate_code_and_ca(self):
+        d = os.path.join(self.tmp, "authelia")
+        os.makedirs(d, exist_ok=True)
+        write_file(os.path.join(d, "notifications.txt"),
+                   "Date: 2026-11-27 10:00:00\nRecipient: { admin admin@helios.home.arpa }\nSubject: Confirm your identity\nBody: old OLDC0DE1\n"
+                   "Date: 2026-11-27 10:05:00\nRecipient: { admin admin@helios.home.arpa }\nSubject: Confirm your identity\n"
+                   "Body: Hi admin, This one-time code: 7XKQ2M9P will expire in 5 minutes.\n")
+        r = self.helios("gate-code")
+        self.assertEqual(r["code"], "7XKQ2M9P")
+        self.assertEqual(r["sent"], "2026-11-27 10:05:00")
+        self.assertIn("isn't made yet", self.helios("gate-ca", ok=False)["error"])
+        write_file(os.path.join(d, "root.crt"), "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n")
+        r = self.helios("gate-ca")
+        self.assertIn("BEGIN CERTIFICATE", r["pem"])
+        self.assertTrue(r["filename"].endswith(".crt"))
+
 
     def test_account_needs_admin_user(self):
         conf = load_json(self.conf_path)

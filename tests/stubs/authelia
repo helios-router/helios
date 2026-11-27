@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""Stand-in for Authelia's CLI (storage user webauthn|totp ...): keeps passkeys and
+TOTP keys in $STUB_AUTHELIA_DB (JSON) and records each call in $STUB_LOG."""
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ.get("STUB_LOG", "/dev/null"), "a") as f:
+    f.write("authelia " + " ".join(a for a in args) + "\n")
+db_path = os.environ["STUB_AUTHELIA_DB"]
+db = json.load(open(db_path)) if os.path.exists(db_path) else {"webauthn": [], "totp": []}
+if not os.environ.get("AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE"):
+    sys.exit("no encryption key")
+a = [x for x in args if x != "--config"]
+def save():
+    json.dump(db, open(db_path, "w"))
+if a[:3] == ["storage", "user", "webauthn"] and a[3] == "export":
+    json.dump({"webauthn_credentials": db["webauthn"]}, open(a[a.index("--file") + 1], "w"))
+elif a[:3] == ["storage", "user", "totp"] and a[3] == "export":
+    json.dump({"totp_configurations": db["totp"]}, open(a[a.index("--file") + 1], "w"))
+elif a[:4] == ["storage", "user", "webauthn", "delete"]:
+    kid = a[a.index("--kid") + 1]
+    db["webauthn"] = [c for c in db["webauthn"] if c["kid"] != kid]; save()
+elif a[:4] == ["storage", "user", "totp", "delete"]:
+    db["totp"] = [c for c in db["totp"] if c["username"] != a[4]]; save()
+elif a[:4] == ["storage", "user", "totp", "generate"]:
+    user, secret = a[4], "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+    db["totp"] = [c for c in db["totp"] if c["username"] != user] + [{"username": user, "secret": secret}]; save()
+    print(f"Successfully generated TOTP configuration for user '{user}' with URL 'otpauth://totp/HeliOS:{user}?secret={secret}&issuer=HeliOS'")
+else:
+    sys.exit("stub authelia: unsupported " + " ".join(args))

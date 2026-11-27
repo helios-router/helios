@@ -3,7 +3,7 @@
 # system, and the exact HeliOS and nixpkgs sources with a flake.lock pinned to
 # them. (offlinePaths is empty only for the pure `nix flake check` evaluation.)
 # Used by iso.nix and the VM test.
-{ heliosSrc, nixpkgsSrc, offlinePaths ? [ ] }:
+{ heliosSrc, nixpkgsSrc, unstableSrc ? null, offlinePaths ? [ ] }:
 { config, lib, pkgs, ... }:
 
 let
@@ -44,9 +44,15 @@ let
         original = { type = "github"; owner = "NixOS"; repo = "nixpkgs"; ref = "nixos-${lib.versions.majorMinor lib.version}"; };
       };
       helios = {
-        inputs.nixpkgs = [ "nixpkgs" ];
+        inputs = { nixpkgs = [ "nixpkgs" ]; } // lib.optionalAttrs (unstableSrc != null) { nixpkgs-unstable = "nixpkgs-unstable"; };
         locked = heliosLocked;
         original = { type = "github"; inherit (heliosUrl) owner repo; };
+      };
+    } // lib.optionalAttrs (unstableSrc != null) {
+      # HeliOS's own pin for the few packages it takes from unstable (Authelia)
+      nixpkgs-unstable = {
+        locked = { type = "path"; path = "${unstableSrc}"; inherit (unstableSrc) narHash lastModified rev; };
+        original = { type = "github"; owner = "NixOS"; repo = "nixpkgs"; ref = "nixos-unstable"; };
       };
     };
   };
@@ -64,7 +70,7 @@ let
       HELIOS_LOCK = if offline then "${pkgs.writeText "flake.lock" (builtins.toJSON lock)}" else "";
       # Sources the lock points at: copied onto the new system so it can rebuild offline
       HELIOS_SRC = "${src}";
-      HELIOS_SOURCES = if offline then "${src} ${nixpkgsSrc}" else "";
+      HELIOS_SOURCES = if offline then "${src} ${nixpkgsSrc}${lib.optionalString (unstableSrc != null) " ${unstableSrc}"}" else "";
       HELIOS_PIN_SOURCES = if offline then "1" else "";
     };
     text = builtins.readFile ./helios-install.sh;

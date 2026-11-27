@@ -93,6 +93,17 @@
       ],
       "desc": "Use your home internet and filtering from anywhere, through Tailscale, WireGuard, OpenVPN or a proxy."
     },
+    "gate": {
+      "group": "optional",
+      "label": "Passkey sign-in",
+      "size": "small",
+      "tab": "advanced",
+      "units": [
+        "authelia-helios",
+        "caddy"
+      ],
+      "desc": "Sign in to these pages with a passkey (a FIDO2 key such as a YubiKey or pico-fido, or your phone) on top of the admin password. Passkeys are the recommended second factor; a 6-digit code works as a fallback. Set it up in Advanced → Admin account once it's on."
+    },
     "logwatch": {
       "group": "optional",
       "label": "AI log triage",

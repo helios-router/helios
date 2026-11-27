@@ -78,6 +78,7 @@ Everything is declared in `modules/options.nix`. [How It Works](How-It-Works) ex
 | Option | Default | Meaning |
 |---|---|---|
 | `helios.logwatch.enable` | `false` | Default for the AI log triage service. |
+| `helios.gate.enable` | `false` | Default for the Passkey sign-in service: an Authelia sign-in gate (behind Caddy) in front of Cockpit. Passkeys are the preferred second factor, a code the fallback. Set it up in Photosphere → Advanced → Admin account; see [Advanced](Page-Advanced#passkey-sign-in-card). |
 | `helios.logwatch.model` | `"/var/lib/llm/model.gguf"` | Model file used when Photosphere's model is "site". |
 | `helios.logwatch.backend` | `"vulkan"` | `vulkan` (iGPU), `cpu`, or `remote` (an existing llama.cpp server). Used when Photosphere's backend is "site". |
 | `helios.logwatch.remoteUrl` | `null` | llama.cpp server URL; required when the backend is `remote`. |
@@ -110,6 +111,7 @@ Five services are switchable. `site.nix` sets each default; a choice in Photosph
 | `printing` | `helios.printing.enable` | off |
 | `remote` | `helios.heliosphere.enable` | off |
 | `logwatch` | `helios.logwatch.enable` | off |
+| `gate` | `helios.gate.enable` | off |
 
 Core services always run: networks and DHCP, firewall, DNS and filtering, NTP, management (Cockpit, SSH, backups), health checks. Turning a service on downloads its software at the next apply; turning it off removes it. Tailscale admin access is set only in `site.nix`.
 

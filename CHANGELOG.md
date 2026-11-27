@@ -24,6 +24,12 @@ track `main` through the flake, and the commit hash is the version.
   dependencies are pinned. (#2)
 
 ### Added
+- Passkey sign-in (optional `gate` service): an Authelia gate in front of
+  Cockpit. Passkeys are the preferred second factor (a key with a PIN gets past
+  the gate alone, so the admin password is typed once); a code is the fallback;
+  the rescue port skips it. Set up in Photosphere → Advanced; the installer
+  offers it and recommends passkeys. Authelia comes from a pinned
+  `nixpkgs-unstable` flake input while stable lacks a security fix.
 - Admin account card (Photosphere → Advanced): change the admin password and turn on
   two-factor sign-in (TOTP) for Cockpit, with one-use recovery codes. Changes
   need the current password or code. The hardening VM test signs in through

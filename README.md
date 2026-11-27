@@ -51,7 +51,7 @@ version or reproduce. HeliOS takes the NixOS approach:
 | **Hubble** | monitoring: hardware watchdog and traffic statistics (an internet-outage monitor runs alongside Photosphere) |
 | **Discovery** | optional AI log triage: a small local language model reads warnings and notifies you about the worrying ones |
 | **Lagrange** | interfaces and VLANs: one trunk to the switch carries every network, plus the modem's VLAN |
-| **Airlock** | the way in for you: admin login with optional two-factor sign-in for Cockpit, SSH with keys only, a password only on the physical rescue port |
+| **Airlock** | the way in for you: admin login with optional two-factor sign-in (passkeys preferred, through an optional Authelia gate), SSH with keys only, a password only on the physical rescue port |
 | **Pioneer** | optional print server (CUPS), shared only to networks you allow |
 | **Rosetta** | drivers: detects hardware and turns on support you approve (UPS, LLDP), plus a weekly vulnerability scan |
 

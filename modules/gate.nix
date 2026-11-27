@@ -1,0 +1,238 @@
+# Gate: the optional sign-in gate in front of Cockpit (Photosphere).
+#
+# Off by default: Cockpit serves :9090 itself, with the admin password (plus a
+# code from airlock.nix's TOTP, if set up). Turn it on as the "gate" service
+# (Photosphere → Advanced → Services, or helios.gate.enable); the next Apply
+# downloads Authelia and Caddy. Then:
+#
+# Caddy serves https://<host>.<domain>:9090 and Cockpit listens on localhost
+# only. Once two-factor sign-in is on, every request first needs an Authelia
+# session; then Cockpit asks for the admin password as usual.
+#
+#   preferred: a passkey (FIDO2 key or phone) that checks its PIN/biometric.
+#              On its own it satisfies the gate, so the admin password is typed
+#              once, at Cockpit.
+#   fallback:  the admin password plus a 6-digit code at the gate, then the
+#              password again at Cockpit.
+#   rescue:    the rescue port skips the gate (matched by the client's source
+#              address, which the firewall only accepts on rescue0): admin
+#              password only.
+#
+# Even then, the gate only enforces once Photosphere turns it on (a passkey or code is
+# registered and the gate knows the admin password), so upgrading a router never
+# locks anyone out. Off switch from SSH or the console: helios-ctl gate-off.
+#
+# Passkey-alone-is-two-factors relies on Authelia's
+# webauthn.experimental_enable_passkey_uv_two_factors. Authelia plans to replace
+# it, and a release without it will refuse to start with it set. The hardening VM
+# test starts Authelia with this config, so an update that drops it fails CI
+# before it reaches a router (then move to Authelia's replacement policies).
+{ config, lib, pkgs, heliosUnstable, ... }:
+
+let
+  cfg = config.helios;
+  I = cfg.internal;
+  fqdn = "${cfg.hostName}.${cfg.domain}";
+  port = 9090;
+  cockpitPort = 9089;     # localhost only, behind Caddy
+  autheliaPort = 9091;    # localhost only
+  name = "helios";
+  stateDir = "/var/lib/authelia-${name}";
+  gateDir = "/var/lib/helios-gate";          # Caddy reads the "enforced" flag here
+  user = "authelia-${name}";
+
+  # Stay on stable nixpkgs unless it lacks a security fix: this is the oldest
+  # Authelia release with every published advisory fixed. Raise it when a new
+  # advisory comes out (https://github.com/authelia/authelia/security/advisories).
+  autheliaSecure = "4.39.20";
+  stablePkg = pkgs.authelia;
+  unstablePkg = if heliosUnstable == null then null else heliosUnstable.authelia;
+  authelia =
+    if lib.versionAtLeast stablePkg.version autheliaSecure then stablePkg
+    else if unstablePkg != null && lib.versionAtLeast unstablePkg.version autheliaSecure then unstablePkg
+    else stablePkg;
+
+  rescue = cfg.interfaces.rescueMac != null;
+  rescueNet = "${lib.concatStringsSep "." (lib.take 3 (lib.splitString "." cfg.interfaces.rescueAddress))}.0/24";
+
+  # Settings shared by the service and helios-ctl's storage commands
+  storage.local.path = "${stateDir}/db.sqlite3";
+  cliConfig = (pkgs.formats.yaml { }).generate "authelia-cli.yml" { inherit storage; };
+
+  init = pkgs.writeShellScript "helios-gate-init" ''
+    set -eu
+    umask 077
+    install -d -m 0700 -o ${user} -g ${user} ${stateDir} ${stateDir}/secrets
+    install -d -m 0750 -o root -g caddy ${gateDir}
+    for s in jwt session storage; do
+      f=${stateDir}/secrets/$s
+      [ -s "$f" ] || ${pkgs.openssl}/bin/openssl rand -hex 48 > "$f"
+    done
+    # Until Photosphere copies the admin password here, the gate user has a random
+    # password nobody knows (and the gate isn't enforced)
+    if [ ! -s ${stateDir}/users.yml ]; then
+      digest=$(${authelia}/bin/authelia crypto hash generate argon2 --random --random.length 64 | ${pkgs.gnused}/bin/sed -n 's/^Digest: //p')
+      [ -n "$digest" ]
+      printf 'users:\n  %s:\n    disabled: false\n    displayname: "%s"\n    email: "%s@%s"\n    password: "%s"\n    groups: []\n' \
+        '${cfg.admin.user}' '${cfg.admin.user}' '${cfg.admin.user}' '${fqdn}' "$digest" > ${stateDir}/users.yml
+    fi
+    chown -R ${user}:${user} ${stateDir}
+  '';
+in
+{
+  config = lib.mkMerge [ {
+  # What helios-ctl needs to manage the gate (also when it's off, to say so)
+  helios.internal.gate = {
+    enabled = I.on "gate";
+    inherit fqdn port stateDir gateDir;
+    url = "https://${fqdn}:${toString port}";
+    # Package paths only while it's on, so routers without the gate (and the
+    # installer image) don't carry Authelia
+    authelia = if I.on "gate" then "${authelia}/bin/authelia" else null;
+    autheliaVersion = if I.on "gate" then authelia.version else null;
+    cliConfig = if I.on "gate" then "${cliConfig}" else null;
+    storageKeyFile = "${stateDir}/secrets/storage";
+    usersFile = "${stateDir}/users.yml";
+    notifications = "${stateDir}/notifications.txt";
+    caCert = "/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt";
+  };
+} (lib.mkIf (I.on "gate") {
+  warnings = lib.optional (!lib.versionAtLeast authelia.version autheliaSecure)
+    "HeliOS: Authelia ${authelia.version} lacks security fixes from ${autheliaSecure}; use HeliOS's flake (it brings a newer Authelia) or a newer nixpkgs.";
+
+  # ---------------------------------------------------------------- Authelia
+  services.authelia.instances.${name} = {
+    enable = true;
+    package = authelia;
+    secrets = {
+      jwtSecretFile = "${stateDir}/secrets/jwt";
+      sessionSecretFile = "${stateDir}/secrets/session";
+      storageEncryptionKeyFile = "${stateDir}/secrets/storage";
+    };
+    settings = {
+      theme = "auto";
+      default_2fa_method = "webauthn";
+      server.address = "tcp://127.0.0.1:${toString autheliaPort}/auth";
+      log.level = "info";
+      ntp = { disable_startup_check = true; disable_failure = true; };   # often offline at boot
+      authentication_backend = {
+        password_reset.disable = true;
+        password_change.disable = true;   # Photosphere changes it (with the router's)
+        file = { path = "${stateDir}/users.yml"; watch = true; };
+      };
+      access_control = {
+        default_policy = "deny";
+        rules = [ { domain = [ fqdn ]; policy = "two_factor"; } ];
+      };
+      session = {
+        name = "helios_gate";
+        expiration = "12h";
+        inactivity = "1h";
+        remember_me = "-1";
+        cookies = [ {
+          domain = fqdn;
+          authelia_url = "https://${fqdn}:${toString port}/auth";
+          default_redirection_url = "https://${fqdn}:${toString port}/";
+        } ];
+      };
+      regulation = { max_retries = 5; find_time = "2m"; ban_time = "10m"; };
+      inherit storage;
+      notifier.filesystem.filename = "${stateDir}/notifications.txt";
+      totp = { issuer = "HeliOS (${cfg.hostName})"; period = 30; skew = 1; };
+      webauthn = {
+        display_name = "HeliOS (${cfg.hostName})";
+        enable_passkey_login = true;
+        # A passkey that checked its PIN or biometric satisfies two_factor on its own
+        experimental_enable_passkey_uv_two_factors = true;
+        attestation_conveyance_preference = "none";   # DIY keys (pico-fido) aren't in FIDO's metadata
+        selection_criteria = {
+          discoverability = "required";               # stored on the key: no username to type
+          user_verification = "required";             # always the key's PIN (or biometric)
+        };
+      };
+    };
+  };
+
+  systemd.services.helios-gate-init = {
+    description = "HeliOS: sign-in gate secrets and user file";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "authelia-${name}.service" "caddy.service" ];
+    requiredBy = [ "authelia-${name}.service" ];
+    serviceConfig = { Type = "oneshot"; RemainAfterExit = true; ExecStart = init; };
+  };
+
+  # ---------------------------------------------------------------- Cockpit behind Caddy
+  systemd.sockets.cockpit.listenStreams = lib.mkForce [ "" "127.0.0.1:${toString cockpitPort}" ];
+  services.cockpit.allowed-origins = lib.optional rescue "https://${cfg.interfaces.rescueAddress}:${toString port}";
+  services.cockpit.settings.WebService = {
+    AllowUnencrypted = true;              # plain HTTP on localhost; Caddy does TLS
+    ProtocolHeader = "X-Forwarded-Proto";
+    # The client's address for PAM (the rescue-port rule in airlock.nix). Only
+    # Caddy and local processes can reach Cockpit now, and Caddy sets this itself.
+    ForwardedForHeader = "X-Forwarded-For";
+  };
+
+  services.caddy = {
+    enable = true;
+    # No admin API: on localhost it would let any local user rewrite the gate.
+    # Config changes restart Caddy instead of reloading it.
+    enableReload = false;
+    globalConfig = ''
+      admin off
+      auto_https disable_redirects
+      skip_install_trust
+      default_sni ${fqdn}
+    '';
+    virtualHosts."https://${fqdn}:${toString port}, https://${cfg.hostName}:${toString port}, https://${I.adminGw}:${toString port}${lib.optionalString rescue ", https://${cfg.interfaces.rescueAddress}:${toString port}"}".extraConfig = ''
+      tls internal
+      encode zstd gzip
+
+      # In this order (a route keeps it): the first matching handle wins
+      route {
+        ${lib.optionalString rescue ''
+        # Rescue port: no gate, admin password only. Matched on the client's address
+        # (the firewall only lets the rescue subnet in on rescue0), never the Host header.
+        @rescue remote_ip ${rescueNet}
+        handle @rescue {
+          reverse_proxy 127.0.0.1:${toString cockpitPort}
+        }
+        ''}
+        # The gate's own pages
+        handle /auth* {
+          reverse_proxy 127.0.0.1:${toString autheliaPort}
+        }
+        # Two-factor sign-in on (Photosphere writes the flag): passkeys and the
+        # session cookie need the router's full name, so other names redirect to it
+        @othername {
+          file {
+            root ${gateDir}
+            try_files enforced
+          }
+          not host ${fqdn}
+        }
+        handle @othername {
+          redir https://${fqdn}:${toString port}{uri} 302
+        }
+        @enforced file {
+          root ${gateDir}
+          try_files enforced
+        }
+        handle @enforced {
+          forward_auth 127.0.0.1:${toString autheliaPort} {
+            uri /auth/api/authz/forward-auth
+            copy_headers Remote-User
+          }
+          reverse_proxy 127.0.0.1:${toString cockpitPort}
+        }
+        handle {
+          reverse_proxy 127.0.0.1:${toString cockpitPort}
+        }
+      }
+    '';
+  };
+  systemd.services.caddy = {
+    after = [ "helios-gate-init.service" ];
+    wants = [ "helios-gate-init.service" ];
+  };
+}) ];
+}

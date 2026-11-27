@@ -119,7 +119,8 @@ Not everything goes through a rebuild:
 | `galileo.nix` | Galileo | Kea DHCP on every network (2 hour leases, router as gateway, DNS and NTP, fixed reservations for named devices) and local names `<device>.<domain>` for every named device. Named after Galileo, who named Jupiter's moons. |
 | `heliopause.nix` | Heliopause | The firewall described above. Also holds Magnetosphere's DNS hijack and bypass blocks, because nftables needs them in the same chains. |
 | `magnetosphere.nix` | Magnetosphere | Turns off systemd-resolved, points the router at 127.0.0.1, enables AdGuard Home with mutable settings. Per-device profiles are synced from `state.json` by `helios-ctl` on every apply, using `/var/lib/helios/adguard.json`. |
-| `airlock.nix` | Airlock | Admin user in `wheel` with your SSH keys; SSH with keys only, no root login, no X11, 3 auth tries; password login only on the rescue address; port 22 not opened on the WAN. Cockpit sign-in checks the password first (`requisite`), then asks for a TOTP code once two-factor sign-in is on (`pam_google_authenticator`, secret in `/var/lib/helios/totp/<user>`, root-only). |
+| `airlock.nix` | Airlock | Admin user in `wheel` with your SSH keys; SSH with keys only, no root login, no X11, 3 auth tries; password login only on the rescue address; port 22 not opened on the WAN. From the rescue subnet Cockpit skips the code (`pam_access`). Cockpit sign-in checks the password first (`requisite`), then asks for a TOTP code once two-factor sign-in is on (`pam_google_authenticator`, secret in `/var/lib/helios/totp/<user>`, root-only). |
+| `gate.nix` | Passkey sign-in (optional) | With the `gate` service on: Cockpit moves to `127.0.0.1:9089` and Caddy serves `:9090` (its own internal CA). Authelia (`authelia-helios`, `127.0.0.1:9091/auth`) is the gate: rule `two_factor` for `<host>.<domain>`; a passkey that checks its PIN satisfies it on its own (`experimental_enable_passkey_uv_two_factors`), otherwise password + TOTP. Caddy only enforces it while `/var/lib/helios-gate/enforced` exists (Photosphere writes it), sends the rescue subnet (matched by client address) straight to Cockpit, and redirects other names to `<host>.<domain>`. Authelia is the oldest of stable or the flake's pinned `nixpkgs-unstable` that has every security fix (`autheliaSecure` in the module). |
 | `tailscale.nix` | tailscale | The router joins the tailnet with the configured tag, `--accept-dns=false`, `--netfilter-mode=off` (Heliopause handles `tailscale0`), optionally advertises an exit node and the `tailnet` networks as subnet routes, optionally with `--login-server` for Headscale. |
 | `heliosphere.nix` | Heliosphere | A NixOS container (`ve-heliosphere`, 10.60.0.2, host side 10.60.0.1) with the ways in and out, below. |
 | `solar-wind.nix` | Solar Wind | ntfy-sh with deny-all access, no sign-ups, 72 hour cache. A setup unit generates a write-only token for the router and a read-only phone login on first boot. Optional Tailscale Funnel unit. |
@@ -179,6 +180,7 @@ Built-in drivers are listed in `pkgs/drivers.json`: `manual` (checklists for swi
 | Galileo | DHCP and local names |
 | Lagrange | interfaces and VLANs |
 | Airlock | admin user and SSH |
+| gate | the optional passkey / two-factor sign-in in front of Cockpit (Authelia) |
 | Pioneer | print server (CUPS) |
 | Rosetta | drivers and hardware detection |
 | `helios-ctl` | the backend; JSON in, JSON out |

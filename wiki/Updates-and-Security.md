@@ -21,7 +21,7 @@ Notes:
 
 ### Weekly flake.lock pull request
 
-`.github/workflows/update-flake-lock.yml` runs Mondays at 06:17 UTC (and on demand). It runs Determinate Systems' update-flake-lock action and opens a pull request titled "flake.lock: update nixpkgs" with the `dependencies` label. CI must pass before it is merged; routers then pick it up on their next `nix flake update helios`.
+`.github/workflows/update-flake-lock.yml` runs Mondays at 06:17 UTC (and on demand). It runs Determinate Systems' update-flake-lock action and opens a pull request titled "flake.lock: update nixpkgs (and the nixpkgs-unstable pin)" with the `dependencies` label. The unstable pin only supplies packages stable can't yet give with every security fix (Authelia); which version a router runs is decided by `autheliaSecure` in `modules/gate.nix`, not by the pin moving. CI must pass before it is merged; routers then pick it up on their next `nix flake update helios`.
 
 PRs opened with the default `GITHUB_TOKEN` do not trigger CI. The workflow therefore uses a repository secret `FLAKE_UPDATE_TOKEN` when it exists (a fine-grained token for this repository only, with contents and pull-requests write) and falls back to the default token.
 
@@ -105,6 +105,7 @@ Report it privately through GitHub: on the repository, open Security, then Repor
 ## Hardening built into a router
 
 * SSH: keys only, no root login, 3 attempts, never exposed on the WAN; password login exists only on the rescue port address.
+* Optional passkey sign-in (Photosphere → Advanced, `gate` service): an Authelia gate in front of Cockpit. Passkeys are the preferred second factor (a key with a PIN gets past the gate alone, so the password is typed once); password + code is the fallback; the rescue port skips the gate. HeliOS takes Authelia from stable nixpkgs unless stable lacks a security fix: then from the flake's pinned `nixpkgs-unstable` input (`autheliaSecure` in `modules/gate.nix` names the oldest release with every advisory fixed; raise it when a new one comes out).
 * Cockpit sign-in can require a one-time code from an authenticator app (Photosphere → Advanced → Admin account), with one-use recovery codes. The password is checked first, so wrong passwords don't use up the code's rate limit (3 tries per 30 seconds). Turning it off, moving it to a new phone or changing the password needs the current code or password, not just a signed-in session. SSH, `sudo` and the console are not affected, so a lost phone cannot lock you out; the rescue port's password SSH skips the code too (it needs physical access).
 * The router's admin ports (SSH, Cockpit, AdGuard) are reachable only from admin networks, Tailscale and the rescue port. Probes from other networks are dropped and notified.
 * Notifications are deny-all; the router publishes with a write-only token, phones log in with a read-only account. Both are generated on first boot and never enter the Nix store.

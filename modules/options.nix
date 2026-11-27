@@ -17,6 +17,7 @@ let
     printing = cfg.printing.enable;
     remote = cfg.heliosphere.enable;
     logwatch = cfg.logwatch.enable;
+    gate = cfg.gate.enable;
   };
   on = id: ((state.services or { }).${id} or { }).enabled or serviceDefaults.${id};
   state = cfg.state;
@@ -79,6 +80,12 @@ in
   options.helios = {
     hostName = mkOption { type = types.str; default = "helios"; description = "Router hostname (also <hostName>.<domain>)."; };
     domain = mkOption { type = types.str; default = "home.arpa"; description = "Local DNS suffix handed out by DHCP. home.arpa is the standard for homes."; };
+
+    gate.enable = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Sign-in gate (Authelia + Caddy) in front of Cockpit: passkeys (preferred) or a code as the second factor. Usually switched on in Photosphere → Advanced → Services.";
+    };
 
     admin = {
       user = mkOption { type = types.str; description = "Your login on the router (wheel, SSH)."; };
@@ -252,6 +259,7 @@ in
     environment.etc."helios/config.json".text = builtins.toJSON {
       inherit (cfg) hostName domain configDir stateFile;
       admin = { inherit (cfg.admin) user; sshKeys = builtins.length cfg.admin.sshKeys; totpDir = "/var/lib/helios/totp"; inherit (config.users) mutableUsers; };
+      gate = cfg.internal.gate // { rescue = cfg.interfaces.rescueMac != null; };
       inherit (cfg.interfaces) wanVlan;
       networks = networks;
       roles = catalog.roles;

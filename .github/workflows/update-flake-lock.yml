@@ -17,7 +17,7 @@ jobs:
       - uses: cachix/install-nix-action@382a9ed9481c7c1f94f68b72ef105b3417c73877 # v32.1.0
       - uses: DeterminateSystems/update-flake-lock@da03c0f078bc4b2c37ee4f7e072d34bf8f188bb3 # v29
         with:
-          pr-title: "flake.lock: update nixpkgs"
+          pr-title: "flake.lock: update nixpkgs (and the nixpkgs-unstable pin)"
           pr-labels: dependencies
           # PRs opened with the default token don't trigger CI. A fine-grained
           # token (contents + pull-requests: write, this repo only) fixes that.

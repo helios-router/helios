@@ -1,6 +1,11 @@
 # HeliOS — a NixOS router. Import this directory (or the flake's
 # nixosModules.default) and set helios.* in your site.nix.
+{ lib, ... }:
 {
+  # The flake's nixosModules.default sets this to nixpkgs-unstable's packages,
+  # for the few that need a security fix stable doesn't have yet (Authelia)
+  _module.args.heliosUnstable = lib.mkDefault null;
+
   imports = [
     ./options.nix
     ./lagrange.nix       # Lagrange: interfaces, VLANs, mDNS, NTP
@@ -8,6 +13,7 @@
     ./heliopause.nix     # firewall (+ Magnetosphere enforcement)
     ./magnetosphere.nix  # DNS filtering (AdGuard Home)
     ./airlock.nix        # Airlock: admin user, SSH
+    ./gate.nix           # passkey / two-factor sign-in gate in front of Cockpit (optional)
     ./tailscale.nix      # admin exit + subnet router
     ./heliosphere.nix    # filtered family exit (optional)
     ./solar-wind.nix     # push notifications (ntfy)

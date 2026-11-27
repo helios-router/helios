@@ -11,7 +11,7 @@
 #   Recovery shell   a root shell for repairing an installed router (helios-mount)
 # NixOS's own extras stay below them: "Options" (nomodeset, serial console,
 # copy to RAM), firmware setup and shutdown.
-{ heliosSrc, nixpkgsSrc, offlinePaths ? [ ] }:
+{ heliosSrc, nixpkgsSrc, unstableSrc ? null, offlinePaths ? [ ] }:
 { config, lib, pkgs, modulesPath, ... }:
 
 let
@@ -49,7 +49,8 @@ let
       nixos-enter --root /mnt               a shell inside it
     Inside (after nixos-enter):
       passwd <admin>                        reset the admin password
-      rm /var/lib/helios/totp/<admin>       turn off two-factor sign-in
+      rm /var/lib/helios/totp/<admin>       turn off the code Cockpit asks for
+      helios-ctl gate-off                   stop requiring passkey sign-in
       nix-env -p /nix/var/nix/profiles/system --list-generations
       nix-env -p /nix/var/nix/profiles/system --rollback \
         && /nix/var/nix/profiles/system/bin/switch-to-configuration boot
@@ -60,7 +61,7 @@ in
 {
   imports = [
     "${modulesPath}/installer/cd-dvd/installation-cd-minimal.nix"
-    (import ./tool.nix { inherit heliosSrc nixpkgsSrc offlinePaths; })
+    (import ./tool.nix { inherit heliosSrc nixpkgsSrc unstableSrc offlinePaths; })
   ];
 
   options.helios.installer.wizard = lib.mkOption {
