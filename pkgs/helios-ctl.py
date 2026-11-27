@@ -4369,7 +4369,7 @@ def write_private(path, text, mode=0o600):
         try:
             os.remove(tmp)
         except OSError:
-            pass
+            pass   # the temp file may not exist; the original error is what matters
         raise
 
 
@@ -4524,7 +4524,7 @@ def cmd_account_2fa_disable(a):
         try:
             os.remove(f)
         except FileNotFoundError:
-            pass
+            pass   # already gone: nothing to turn off
     out({"ok": True, "user": user})
 
 
