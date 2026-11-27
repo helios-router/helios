@@ -221,8 +221,13 @@ in
         router.wait_for_unit("caddy.service")
         listen = router.succeed("ss -Htlnp")
         print(listen)
-        assert "127.0.0.1:9089" in listen and "cockpit" in listen.split("127.0.0.1:9089")[1].split("\n")[0], "Cockpit isn't on localhost:9089"
-        assert not any(":9089" in l and "127.0.0.1:9089" not in l for l in listen.splitlines()), "Cockpit listens beyond localhost"
+        # Cockpit is socket-activated: systemd holds its socket, on localhost only
+        sock = router.succeed("systemctl show -p Listen --value cockpit.socket").split()
+        print(sock)
+        addrs = [x for x in sock if not x.startswith("(")]
+        assert addrs == ["127.0.0.1:9089"], f"Cockpit's socket isn't localhost-only: {sock}"
+        assert "127.0.0.1:9089" in listen and not any(":9089" in l and "127.0.0.1:9089" not in l for l in listen.splitlines()), "Cockpit listens beyond localhost"
+        assert any(":9090" in l and "caddy" in l for l in listen.splitlines()), "Caddy isn't serving :9090"
         fqdn = "helios.example.test"   # helios.gate.domain: the sign-in page's name
         base = f"https://{fqdn}:9090"
         jar = "/tmp/gate-cookies"
