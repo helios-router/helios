@@ -307,4 +307,4 @@ Photosphere recommends the largest preset whose RAM need fits in half of (RAM mi
 | `/var/lib/helios/solarwind-token`, `solarwind.env` | Generated on first boot; never in the Nix store. |
 | `/var/lib/helios/apply.json`, `apply.log` | State and log of the current apply. |
 | `/var/lib/heliosphere/` | Remote access secrets and PKI. |
-| `/var/lib/llm/` | Downloaded log triage models (folder 0700, files 0400, owned by `llm`, the account llama-cpp runs as). |
+| `/var/lib/llm/` | Downloaded log triage models: files 0400, owned by `llm` (the account llama-cpp runs as); the folder is root's with group `llm` (0750), so llama-cpp can read but not change it. |

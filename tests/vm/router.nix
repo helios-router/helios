@@ -2,93 +2,22 @@
 # that plays the switch trunk; isp and the clients tag their own 802.1Q VLANs.
 { self }:
 
-let
-  # Plain eth1 on the trunk: no test-framework 192.168.1.x / 2001:db8 addresses,
-  # so the only path between machines is through the router's VLANs.
-  trunkOnly = { lib, ... }: {
-    virtualisation.vlans = [ 1 ];
-    networking.interfaces.eth1.ipv4.addresses = lib.mkForce [ ];
-    networking.interfaces.eth1.ipv6.addresses = lib.mkForce [ ];
-  };
-
-  # A machine with one tagged VLAN interface "vlan<id>" on eth1
-  vlanHost = id: extra: { lib, pkgs, ... }: {
-    imports = [ trunkOnly ];
-    networking.useNetworkd = true;
-    networking.useDHCP = false;
-    systemd.network.netdevs."20-vlan${toString id}" = {
-      netdevConfig = { Kind = "vlan"; Name = "vlan${toString id}"; };
-      vlanConfig.Id = id;
-    };
-    systemd.network.networks."30-eth1" = {
-      matchConfig.Name = "eth1";
-      vlan = [ "vlan${toString id}" ];
-      networkConfig.LinkLocalAddressing = "no";
-    };
-    systemd.network.networks."31-vlan${toString id}" = lib.mkMerge [
-      { matchConfig.Name = "vlan${toString id}"; }
-      extra
-    ];
-    environment.systemPackages = [ pkgs.curl pkgs.netcat ];
-  };
-
-  client = id: vlanHost id { networkConfig = { DHCP = "ipv4"; IPv6AcceptRA = false; LinkLocalAddressing = "no"; }; };
-in
+let common = import ./common.nix; in
 {
   name = "helios-router";
 
   nodes = {
-    isp = { pkgs, ... }: {
-      imports = [
-        (vlanHost 10 {
-          address = [ "192.0.2.1/24" ];
-          networkConfig = { DHCPServer = true; LinkLocalAddressing = "no"; ConfigureWithoutCarrier = true; };
-          dhcpServerConfig = { PoolOffset = 100; PoolSize = 50; EmitRouter = true; EmitDNS = false; };
-        })
-      ];
-      networking.firewall.enable = false;
-      # "The internet": one page
-      systemd.services.internet = {
-        wantedBy = [ "multi-user.target" ];
-        serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 -m http.server 80 --directory ${pkgs.writeTextDir "index.html" "helios-test-internet\n"}";
-      };
-    };
-
-    trusted = client 20;
-    iot = client 40;
-
-    router = { config, lib, ... }: {
-      imports = [
-        self.nixosModules.default
-        ../../templates/site.nix
-        trunkOnly
-      ];
-      virtualisation.memorySize = 2048;
+    isp = common.isp;
+    trusted = common.client 20;
+    iot = common.client 40;
+    router = {
+      imports = [ (common.router self) ];
       # A virtual hardware watchdog, so the test sees the "driver loads by itself" path
       virtualisation.qemu.options = [ "-device i6300esb" ];
-      helios.admin.user = lib.mkForce "admin";
-      # The test driver names machines by hostName; keep the script's `router`
-      helios.hostName = lib.mkForce "router";
-      # The MAC the test driver gives this node's first NIC on vlan 1 (nixos/lib/qemu-common.nix qemuNicMac)
-      helios.interfaces.trunkMac = lib.mkForce (
-        let n = config.virtualisation.test.nodeNumber;
-        in "52:54:00:12:01:${lib.optionalString (n < 16) "0"}${lib.toLower (lib.toHexString n)}");
-      # Nothing that needs the real internet or extra hardware
-      helios.tailscale.enable = lib.mkForce false;
-      helios.solarWind.enable = lib.mkForce false;
-      helios.logwatch.enable = lib.mkForce false;
-      helios.printing.enable = lib.mkForce false;
-      helios.heliosphere.enable = lib.mkForce false;
     };
   };
 
-  testScript = ''
-    import re
-
-    def lease(m, iface, prefix):
-        m.wait_until_succeeds(f"ip -4 -o addr show dev {iface} | grep -q 'inet {prefix}\\.'", timeout=180)
-        out = m.succeed(f"ip -4 -o addr show dev {iface}")
-        return re.search(r"inet (\d+\.\d+\.\d+\.\d+)/", out).group(1)
+  testScript = common.leaseHelper + ''
 
     start_all()
 

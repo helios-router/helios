@@ -1421,7 +1421,10 @@ def cmd_logwatch_model_get(a):
     if not pr:
         fail(f"no preset {a.preset!r}")
     os.makedirs(LLM_DIR, mode=0o700, exist_ok=True)
-    give_to(LLM_DIR, LLM_USER)
+    # The module's tmpfiles rule gives the folder its owner and mode (root:llm 0750: llama-cpp
+    # reads it, can't write it); apply it now rather than at the next boot
+    if os.geteuid() == 0 and not os.environ.get("HELIOS_NO_SYSTEMD"):
+        run(["systemd-tmpfiles", "--create", "--prefix=" + LLM_DIR])
     free = shutil.disk_usage(LLM_DIR).free
     if free < pr["bytes"] + 512 * 2**20:
         fail(f"not enough space in {LLM_DIR}: needs {pr['bytes'] // 2**20} MB, {free // 2**20} MB free")
