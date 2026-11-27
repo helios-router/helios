@@ -4356,14 +4356,18 @@ def totp_ok(secret, code, at=None):
     return any(hmac.compare_digest(totp_code(secret, step + d), code) for d in (-1, 0, 1))
 
 
-def write_private(path, text, mode=0o600):
-    """Root-only file, written atomically (a fresh temp file, never followed through a link)."""
+def write_private(path, text, mode=0o600, owner=None):
+    """Root-only file (or `owner`'s, see give_to), written atomically (a fresh temp file,
+    never followed through a link). The owner is set before the file takes the name, so
+    a service watching it never sees it unreadable."""
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
     tmp = f"{path}.{os.getpid()}.tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
     try:
         with os.fdopen(fd, "w") as f:
             f.write(text)
+        if owner:
+            give_to(tmp, owner)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -4567,8 +4571,8 @@ def gate_write_password(user, pw):
     text = (f'users:\n  {user}:\n    disabled: false\n    displayname: "{user}"\n'
             f'    email: "{email}"\n    password: "{digest}"\n    groups: []\n')
     path = GATE["usersFile"]
-    write_private(path, text)
-    give_to(path, GATE_USER)
+    # Authelia reloads it as soon as it's renamed into place: it must be Authelia's by then
+    write_private(path, text, owner=GATE_USER)
     write_json(GATE_STATE, {**(read_json(GATE_STATE, {}) or {}), "synced": now()})
 
 
@@ -4712,7 +4716,9 @@ def cmd_gate_code(a):
     gate_on()
     text = read_plain(GATE["notifications"])
     block = text[text.rfind("Date:"):] if "Date:" in text else text[-2000:]
-    m = re.search(r"(?<![A-Za-z0-9])([A-Z0-9]{8,20})(?![A-Za-z0-9])", block.split("Body:", 1)[-1])
+    # Authelia's file notifier writes Date/Recipient/Subject and the plain-text email
+    # (no "Body:" line); the code is the line on its own between two dashed rules
+    m = re.search(r"(?m)^\s*([A-Z0-9]{6,20})\s*$", block)
     when = re.search(r"Date:\s*(.+)", block)
     out({"ok": True, "code": m.group(1) if m else None, "sent": when.group(1).strip() if when else None,
          "text": None if m else block.strip()[-600:]})

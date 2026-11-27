@@ -1799,13 +1799,21 @@ class HeliosCtl(unittest.TestCase):
     def test_gate_code_and_ca(self):
         d = os.path.join(self.tmp, "authelia")
         os.makedirs(d, exist_ok=True)
+        # As Authelia 4.39's file notifier writes it (no "Body:" line; digits in the Date line)
+        def mail(date, code):
+            return (f"Date: {date}\nRecipient: {{admin admin@helios.home.arpa}}\nSubject: Confirm your identity\n"
+                    "A ONE-TIME CODE HAS BEEN GENERATED TO COMPLETE A REQUESTED ACTION\n\nHi admin,\n\n"
+                    "The following one-time code should only be used in the prompt displayed in your browser.\n\n"
+                    f"----------------------------------------\n\n{code}\n\n----------------------------------------\n\n"
+                    "To revoke the code, click the link below:\n\n"
+                    "https://helios.home.arpa:9090/auth/revoke/one-time-code?id=B9fQOPJhQbyM4QS4hPoPWQ\n\n"
+                    "Powered by Authelia https://www.authelia.com\n\n")
         write_file(os.path.join(d, "notifications.txt"),
-                   "Date: 2026-11-27 10:00:00\nRecipient: { admin admin@helios.home.arpa }\nSubject: Confirm your identity\nBody: old OLDC0DE1\n"
-                   "Date: 2026-11-27 10:05:00\nRecipient: { admin admin@helios.home.arpa }\nSubject: Confirm your identity\n"
-                   "Body: Hi admin, This one-time code: 7XKQ2M9P will expire in 5 minutes.\n")
+                   mail("2026-11-27 10:00:00.84246168 +0000 UTC m=+10.021033679", "OLDC0DE1")
+                   + mail("2026-11-27 10:05:00.545209096 +0000 UTC m=+310.5", "ZW4ZRAEN"))
         r = self.helios("gate-code")
-        self.assertEqual(r["code"], "7XKQ2M9P")
-        self.assertEqual(r["sent"], "2026-11-27 10:05:00")
+        self.assertEqual(r["code"], "ZW4ZRAEN")
+        self.assertEqual(r["sent"], "2026-11-27 10:05:00.545209096 +0000 UTC m=+310.5")
         self.assertIn("isn't made yet", self.helios("gate-ca", ok=False)["error"])
         write_file(os.path.join(d, "root.crt"), "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n")
         r = self.helios("gate-ca")

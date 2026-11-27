@@ -32,7 +32,7 @@ jobs:
       - uses: cachix/install-nix-action@382a9ed9481c7c1f94f68b72ef105b3417c73877 # v32.1.0
         with:
           extra_nix_config: "system-features = nixos-test benchmark big-parallel kvm"
-      - run: nix build .#vmTests.router .#vmTests.hardening --print-build-logs --no-link
+      - run: nix build .#vmTests.router .#vmTests.hardening .#vmTests.passkey --print-build-logs --no-link
       - name: Offline install (helios-install in a VM with no network)
         run: nix build --impure .#vmTests.offline-install --print-build-logs --no-link
 

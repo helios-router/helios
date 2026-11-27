@@ -48,6 +48,14 @@ nix flake check --print-build-logs
 
 Builds the `example` system (the site template with placeholders, which exercises the firewall and every module) and the `installer` system. Build the ISO with `nix build --impure .#installer-iso`.
 
+### VM tests
+
+```
+nix build .#vmTests.router .#vmTests.hardening .#vmTests.passkey -L
+```
+
+NixOS VM tests (need KVM): `router` (DHCP, NAT, isolation between networks), `hardening` (blocked devices, Log AI, remote access accounts, Cockpit two-factor sign-in, the sign-in gate) and `passkey` (a client on the trusted network registers a real WebAuthn passkey at the sign-in gate with headless Chromium's virtual authenticator, then signs in with it alone and reaches Cockpit). `nix build --impure .#vmTests.offline-install` installs from the offline image. To debug one interactively: `nix build .#vmTests.passkey.driverInteractive && ./result/bin/nixos-test-driver`.
+
 ### Browsers
 
 `tests/browsers.cjs` is the cross-browser smoke test CI runs, using Playwright against the demo. For each engine, at phone (390 by 844) and desktop (1366 by 900) sizes it checks that every page renders without JavaScript errors, that the page dropdown shows and navigates on phones, that tab rows show on desktops, that the header title does not overlap, and that nothing scrolls sideways. It writes a screenshot of every page.
