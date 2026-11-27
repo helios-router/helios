@@ -4642,7 +4642,8 @@ def cmd_gate(a):
             "rescue": bool(GATE.get("rescue")), "legacyTotp": os.path.exists(totp_file(user)),
             "certificate": gate_certificate()}
     if not GATE.get("enabled"):
-        return out({**base, "enforced": False, "synced": False, "passkeys": [], "totp": False})
+        out({**base, "enforced": False, "synced": False, "passkeys": [], "totp": False})
+        return
     try:
         keys, totp, err = gate_passkeys(user), gate_has_totp(user), None
     except RuntimeError as e:   # e.g. Authelia hasn't made its database yet
@@ -4737,7 +4738,8 @@ def cmd_gate_dns_token(a):
     os.replace(tmp, cred)
     gate_tls_mode("acme" if token else "internal")
     if caddy_restart():
-        return out({"ok": True, "tokenSet": bool(token)})
+        out({"ok": True, "tokenSet": bool(token)})
+        return
     # The plugin refused the token (or Caddy failed otherwise): back to the router's own
     gate_tls_mode("internal")
     caddy_restart()
@@ -4827,7 +4829,8 @@ def cmd_gate_enforce(a):
             os.remove(GATE_FLAG)
         except FileNotFoundError:
             pass   # already off
-        return out({"ok": True, "enforced": False})
+        out({"ok": True, "enforced": False})
+        return
     if not gate_synced():
         fail("Copy the admin password to the gate first")
     if not gate_passkeys(user) and not gate_has_totp(user):
