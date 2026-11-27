@@ -1,6 +1,6 @@
 # Advanced tab
 
-Administration and settings most people never need. This tab is only visible in advanced mode (gear button, see [Header and navigation](Page-Header-and-Navigation)). Cards, top to bottom: Admin account, Services, Maintenance, AI log triage (only while that service is on), System, Backups, Drivers, Security scan.
+Administration and settings most people never need. This tab is only visible in advanced mode (gear button, see [Header and navigation](Page-Header-and-Navigation)). Cards, top to bottom: Admin account, Passkey sign-in, Services, Maintenance, AI log triage (only while that service is on), System, Backups, Drivers, Security scan.
 
 ## Admin account card
 
@@ -12,6 +12,8 @@ The router login you chose in the installer (`helios.admin.user`). Changes here 
 | Password set | When the password was last changed |
 | Two-factor sign-in | On or off. "Set up, but not asked for" (with a red warning) means the key exists but the running system version doesn't ask for it, for example after rolling back to a generation from before two-factor sign-in existed |
 | SSH keys | How many keys `site.nix` authorizes (`helios.admin.sshKeys`; edit them there) |
+
+Until passkey sign-in is required, the second factor can be a code that Cockpit itself asks for (below). The card recommends [Passkey sign-in](#passkey-sign-in-card) instead; once that's required it takes over and these buttons go away.
 
 * **Change password**: asks for the current password, then the new one (12–128 characters) twice. Used for Cockpit, `sudo` and the console. Your Cockpit session stays signed in. Hidden if the router sets passwords in its Nix configuration (`users.mutableUsers = false`); change them there.
 * **Turn on two-factor sign-in**: scan the QR code (or type the key) into an authenticator app, then enter the 6-digit code it shows. Nothing changes until that code matches. You then get five one-use recovery codes, shown once; save or download them. From then on Cockpit asks for a code after the password.
@@ -25,6 +27,33 @@ Two-factor sign-in covers Cockpit (and so Photosphere). SSH only accepts keys, a
 At sign-in, Cockpit checks the password first and only asks for the code when the password is right. The code allows 3 tries per 30 seconds; wrong passwords don't count toward that, so nobody can keep you locked out by guessing passwords.
 
 The rescue port's password SSH login (`helios.interfaces.rescueMac`) does not ask for the code either. It needs someone plugged in at the router, who could use the console just as well.
+
+## Passkey sign-in card
+
+**The full walkthrough, with per-device certificate instructions and troubleshooting, is [Passkey Sign-In](Passkey-Sign-In).** This section describes the card.
+
+An optional sign-in page (Authelia) in front of these pages. **Passkeys are HeliOS's recommended second factor**, and the card says so: any passkey (built into a phone or computer, a password manager like Bitwarden, or a hardware key like a YubiKey or pico-fido) checks it's you itself, can't be phished, and lets you type the admin password only once. A code from an authenticator app works as a fallback, but it can be phished and you type the password twice (at the gate and in Cockpit).
+
+| How you sign in | At the gate | In Cockpit |
+|---|---|---|
+| Passkey (recommended) | the key's PIN and a touch | admin password |
+| Code (fallback) | admin password, then the 6-digit code | admin password again |
+| Rescue port | skipped | admin password only |
+
+While the service is off the card offers **Turn on passkey sign-in** (Authelia downloads at the next Apply, about 50 MB; the installer offers it too when it has internet). Once on, it's a checklist:
+
+1. **The gate knows the admin password.** Copy it once (asks for the current password). Changing the password in the Admin account card keeps both in step.
+2. **A certificate your browser trusts.** Browsers only allow passkeys on a page with a trusted certificate (codes don't need one). Two ways:
+   * **Your own name (nothing to install).** Set `helios.gate.domain` in `site.nix` to a name under a domain whose DNS is on Cloudflare, or a free deSEC name (`yourname.dedyn.io`, set `helios.gate.acme.dnsProvider = "desec"`). The step then shows **Set Cloudflare/deSEC token** with where to create one (Cloudflare: the "Edit zone DNS" template for that zone; deSEC: Token management, optionally limited to TXT records under `_acme-challenge`). The token is stored on the router only (root-only, never in git or backups). The router gets a Let's Encrypt certificate by writing a DNS record, so nothing is exposed to the internet, and renews it by itself; the router answers that name on your networks. Until the certificate arrives, and if renewal keeps failing (a long outage, a revoked token), the router's own certificate is used, so keep it installed on a device or two as a backup. Passkeys are tied to this name: changing it means registering them again.
+   * **The router's own certificate.** **Download certificate** gives the router's certificate authority (Caddy's); install it once per device as a trusted authority. Works with no internet at all.
+3. **Passkeys.** **Add passkey** explains the steps: open the sign-in page (`https://<host>.<domain>:9090/auth/`), sign in with the admin password, add a WebAuthn credential under Settings → Two-Factor Authentication, confirm with the one-time code the dialog shows (**Show latest code**), then the key's PIN and a touch. The key must check its PIN (user verification `required`) and store the passkey (discoverable). Register two if you can. Each has **Remove**.
+4. **Code from an app (fallback).** **Set up code** shows a QR code; enter a code to check the app has it. **Remove code**.
+5. **Try it.** Sign in at the sign-in page with the passkey in a private window before requiring it.
+6. **Require it at sign-in.** Only possible once the password is copied and a passkey or code exists. From then on, sign in at `https://<host>.<domain>:9090` (other addresses redirect there). Any code Cockpit itself asked for until now (the Admin account card's) is retired: the gate asks for the second factor instead. **Stop requiring** turns it off again.
+
+Every change asks for the admin password. The last second factor can't be removed while the gate is required. Locked out: use the rescue port, or run `sudo helios-ctl gate-off` over SSH or on the console (or from the installer's [Recovery shell](Installation#recovery-shell): `helios-mount`, `nixos-enter --root /mnt`, then `helios-ctl gate-off`).
+
+Over Tailscale, use the router's `<host>.<domain>` name too (set split DNS for the domain to the router in your tailnet's DNS settings): passkeys are tied to that name.
 
 ## Services card
 

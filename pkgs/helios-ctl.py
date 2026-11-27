@@ -4387,22 +4387,28 @@ def password_changed(user):
     return int(f[2]) * 86400 if f and f[2].isdigit() else None
 
 
-def password_ok(user, pw):
-    """Check a password against the shadow hash with libcrypt (yescrypt, sha512…)."""
+def libcrypt(pw, setting):
+    """crypt(3) from libxcrypt: hash pw with a setting or an existing hash."""
     import ctypes
     import ctypes.util
+    path = os.environ.get("HELIOS_LIBCRYPT") or ctypes.util.find_library("crypt")
+    if not path:
+        fail("Can't check passwords: libcrypt not found")
+    lib = ctypes.CDLL(path)
+    lib.crypt.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+    lib.crypt.restype = ctypes.c_char_p
+    got = lib.crypt(pw.encode(), setting.encode())
+    return got.decode() if got else None
+
+
+def password_ok(user, pw):
+    """Check a password against the shadow hash (yescrypt, sha512…)."""
     f = shadow_entry(user)
     stored = f[1] if f else ""
     if not stored or stored[0] in "!*":
         return False
-    path = os.environ.get("HELIOS_LIBCRYPT") or ctypes.util.find_library("crypt")
-    if not path:
-        fail("Can't check the current password: libcrypt not found")
-    lib = ctypes.CDLL(path)
-    lib.crypt.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
-    lib.crypt.restype = ctypes.c_char_p
-    got = lib.crypt(pw.encode(), stored.encode())
-    return got is not None and hmac.compare_digest(got, stored.encode())
+    got = libcrypt(pw, stored)
+    return got is not None and hmac.compare_digest(got.encode(), stored.encode())
 
 
 def totp_enforced():
@@ -4472,6 +4478,8 @@ def cmd_account_password(a):
     r = run(["chpasswd"], input=f"{user}:{pw}\n")
     if r.returncode != 0:
         fail(f"chpasswd failed: {r.stderr.strip() or r.stdout.strip()}")
+    if gate_synced():
+        gate_write_password(user, pw)   # the gate's password is the admin password
     out({"ok": True, "user": user})
 
 
@@ -4528,8 +4536,374 @@ def cmd_account_2fa_disable(a):
     out({"ok": True, "user": user})
 
 
+
+# ------------------------------------------------------------------ sign-in gate
+# The optional Authelia gate in front of Cockpit (modules/gate.nix). Its password
+# is the admin password (copied here once, then kept in step by account-password);
+# its second factors are passkeys (preferred: one with a PIN satisfies the gate on
+# its own) and a TOTP code (fallback). Caddy enforces it while GATE_FLAG exists.
+GATE = CFG.get("gate", {}) or {}
+GATE_FLAG = os.path.join(GATE.get("gateDir") or os.path.join(DATA_DIR, "gate"), "enforced")
+GATE_STATE = os.path.join(DATA_DIR, "gate.json")
+GATE_USER = "authelia-helios"
+
+
+def gate_on():
+    if not GATE.get("enabled"):
+        fail("Passkey sign-in is off: turn it on under Advanced → Services and apply first")
+
+
+def gate_synced():
+    return bool(GATE.get("enabled")) and bool((read_json(GATE_STATE, {}) or {}).get("synced"))
+
+
+def gate_write_password(user, pw):
+    """The gate's user file, with the admin password as SHA-512-crypt (which
+    Authelia's file backend reads). Authelia notices the change by itself."""
+    digest = libcrypt(pw, "$6$rounds=100000$" + secrets.token_urlsafe(12).replace("-", ".").replace("_", "/")[:16] + "$")
+    if not digest or not digest.startswith("$6$"):
+        fail("Couldn't hash the password for the gate")
+    email = f"{user}@{GATE.get('fqdn') or 'localhost'}"
+    text = (f'users:\n  {user}:\n    disabled: false\n    displayname: "{user}"\n'
+            f'    email: "{email}"\n    password: "{digest}"\n    groups: []\n')
+    path = GATE["usersFile"]
+    write_private(path, text)
+    give_to(path, GATE_USER)
+    write_json(GATE_STATE, {**(read_json(GATE_STATE, {}) or {}), "synced": now()})
+
+
+def authelia_cli(*args):
+    env = dict(os.environ, AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE=GATE["storageKeyFile"])
+    r = run([GATE["authelia"], *args, "--config", GATE["cliConfig"]], env=env, timeout=60)
+    if r.returncode != 0:
+        text = (r.stderr or "") + "\n" + (r.stdout or "")
+        # Authelia prints "Error: …" and then its usage text: report the error
+        err = next((ln.strip() for ln in text.splitlines() if ln.strip().startswith("Error")), text.strip()[:300])
+        raise RuntimeError(f"authelia {' '.join(args[:4])}: {err[:300]}")
+    return r.stdout
+
+
+def export_rows(text):
+    """The entries of an Authelia storage export (YAML: one key holding a list of
+    flat mappings). Only top-level scalar fields are kept; nested values (lists,
+    mappings) are skipped. Enough for usernames, key IDs, descriptions and dates,
+    without a YAML library."""
+    rows, row, key_indent = [], None, None
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        m = re.match(r"^(\s*)- ([A-Za-z_][A-Za-z0-9_]*):(?:\s+(.*))?$", raw)
+        if m:
+            row = {}
+            rows.append(row)
+            key_indent = len(m.group(1)) + 2
+            name, value = m.group(2), m.group(3)
+        else:
+            m = re.match(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*):(?:\s+(.*))?$", raw)
+            if row is None or not m or len(m.group(1)) != key_indent:
+                continue   # the top-level key, or a nested value
+            name, value = m.group(2), m.group(3)
+        if value is None:
+            continue   # "key:" with the value on the lines below: nested, skipped
+        row[name] = yaml_scalar(value)
+    return rows
+
+
+def yaml_scalar(value):
+    if value is None or value in ("", "~", "null"):
+        return None
+    if value in ("true", "false"):
+        return value == "true"
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        inner = value[1:-1]
+        return inner.replace("''", "'") if value[0] == "'" else inner.replace('\\"', '"').replace("\\\\", "\\")
+    return value
+
+
+def authelia_export(kind):
+    """Rows of `authelia storage user <kind> export` (YAML), from a private temp
+    folder that's removed straight away (a TOTP export holds the secrets)."""
+    d = tempfile.mkdtemp(prefix="helios-gate-")
+    try:
+        f = os.path.join(d, "export.yml")
+        try:
+            authelia_cli("storage", "user", kind, "export", "--file", f)
+        except RuntimeError as e:
+            if "no data to export" in str(e):
+                return []   # Authelia 4.39 treats an empty export as an error
+            raise
+        return export_rows(read_plain(f))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def gate_passkeys(user):
+    keys = []
+    for r in authelia_export("webauthn"):
+        if r.get("username") != user:
+            continue
+        keys.append({"kid": str(r.get("kid") or ""), "description": str(r.get("description") or "passkey"),
+                     "created": r.get("created_at"), "lastUsed": r.get("last_used_at"),
+                     "discoverable": bool(r.get("discoverable")), "verified": bool(r.get("verified", True))})
+    return keys
+
+
+def gate_has_totp(user):
+    return any(r.get("username") == user for r in authelia_export("totp"))
+
+
+def gate_require_password(user, d):
+    if not password_ok(user, str(d.get("current") or "")):
+        fail("The current password is wrong")
+
+
+def gate_certificate():
+    """Which certificate the sign-in page has: Let's Encrypt for the owner's domain
+    (when issued and not expired), else the router's own."""
+    domain = GATE.get("ownDomain")
+    info = {"domain": domain, "provider": GATE.get("dnsProvider") if domain else None,
+            "tokenSet": bool(domain) and read_plain(GATE.get("tlsMode") or "").strip() == "acme",
+            "issuer": "router", "expires": None}
+    pem = GATE.get("acmeCert")
+    if domain and pem and os.path.exists(pem):
+        r = run(["openssl", "x509", "-noout", "-enddate", "-in", pem])
+        m = re.search(r"notAfter=(.+)", r.stdout or "")
+        if m:
+            try:
+                exp = dt.datetime.strptime(m.group(1).strip(), "%b %d %H:%M:%S %Y %Z").replace(tzinfo=dt.timezone.utc)
+                info["expires"] = int(exp.timestamp())
+                if info["expires"] > now():
+                    info["issuer"] = "letsencrypt"
+            except ValueError:
+                pass   # unreadable date: report the router's own certificate
+    return info
+
+
+def cmd_gate(a):
+    user = admin_user()
+    base = {"ok": True, "enabled": bool(GATE.get("enabled")), "url": GATE.get("url"), "fqdn": GATE.get("fqdn"),
+            "rescue": bool(GATE.get("rescue")), "legacyTotp": os.path.exists(totp_file(user)),
+            "certificate": gate_certificate()}
+    if not GATE.get("enabled"):
+        out({**base, "enforced": False, "synced": False, "passkeys": [], "totp": False})
+        return
+    try:
+        keys, totp, err = gate_passkeys(user), gate_has_totp(user), None
+    except RuntimeError as e:   # e.g. Authelia hasn't made its database yet
+        keys, totp, err = [], False, str(e)
+    out({**base, "enforced": os.path.exists(GATE_FLAG), "synced": gate_synced(), "passkeys": keys, "totp": totp,
+         "error": err, "autheliaVersion": GATE.get("autheliaVersion"), "ca": os.path.exists(GATE.get("caCert") or "")})
+
+
+def cmd_gate_sync(a):
+    """stdin {"current"}: copy the admin password to the gate (once; then
+    account-password keeps them in step)."""
+    gate_on()
+    user = admin_user()
+    d = stdin_json()
+    gate_require_password(user, d)
+    gate_write_password(user, str(d["current"]))
+    out({"ok": True, "user": user})
+
+
+def cmd_gate_code(a):
+    """The latest one-time code Authelia "sent" (its notifier writes to a file):
+    asked for before registering a passkey or code."""
+    gate_on()
+    text = read_plain(GATE["notifications"])
+    block = text[text.rfind("Date:"):] if "Date:" in text else text[-2000:]
+    m = re.search(r"(?<![A-Za-z0-9])([A-Z0-9]{8,20})(?![A-Za-z0-9])", block.split("Body:", 1)[-1])
+    when = re.search(r"Date:\s*(.+)", block)
+    out({"ok": True, "code": m.group(1) if m else None, "sent": when.group(1).strip() if when else None,
+         "text": None if m else block.strip()[-600:]})
+
+
+def cmd_gate_ca(a):
+    """The router's own certificate authority (Caddy's), to install once in the
+    browser: passkeys only work on a page whose certificate the browser trusts."""
+    gate_on()
+    pem = read_plain(GATE.get("caCert") or "")
+    if "BEGIN CERTIFICATE" not in pem:
+        fail("The router's certificate isn't made yet: open the sign-in page once, then try again")
+    out({"ok": True, "pem": pem, "filename": f"helios-{CFG.get('hostName', 'router')}-ca.crt"})
+
+
+DNS_TOKEN_RE = re.compile(r"[A-Za-z0-9._~-]{16,200}")
+
+
+def gate_tls_mode(mode):
+    """Point Caddy's own-domain certificate config at the router's own CA
+    ("internal") or Let's Encrypt with that as fallback ("acme")."""
+    target = GATE["tlsAcme"] if mode == "acme" else GATE["tlsInternal"]
+    link = GATE["tlsLink"]
+    tmp = f"{link}.{os.getpid()}.tmp"
+    os.symlink(target, tmp)
+    os.replace(tmp, link)
+    write_private(GATE["tlsMode"], mode + "\n", 0o644)
+
+
+def caddy_restart():
+    """Restart Caddy; True if it's running afterwards."""
+    if os.environ.get("HELIOS_NO_SYSTEMD"):
+        return True
+    run(["systemctl", "restart", "caddy.service"], timeout=60)
+    for _ in range(20):
+        if run(["systemctl", "is-active", "--quiet", "caddy.service"]).returncode == 0:
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def cmd_gate_dns_token(a):
+    """stdin {"current", "token"}: the DNS provider's API token for the own-domain
+    certificate (empty = remove it). It goes to systemd-creds on stdin and is kept
+    encrypted (host key); Caddy gets it as a credential. Never logged, never in git.
+    If Caddy won't start with it, the router's own certificate is put back."""
+    gate_on()
+    user = admin_user()
+    if not GATE.get("ownDomain"):
+        fail("No own domain set: helios.gate.domain in site.nix")
+    d = stdin_json()
+    gate_require_password(user, d)
+    token = str(d.get("token") or "").strip()
+    if token and not DNS_TOKEN_RE.fullmatch(token):
+        fail("That doesn't look like an API token (letters, digits, - _ . ~ only)")
+    cred = GATE["dnsCred"]
+    tmp = f"{cred}.{os.getpid()}.tmp"
+    r = run(["systemd-creds", "encrypt", "--with-key=host", f"--name={GATE['credName']}", "-", tmp], input=token)
+    if r.returncode != 0:
+        try:
+            os.remove(tmp)
+        except FileNotFoundError:
+            pass   # nothing was written
+        fail(f"Couldn't store the token: {(r.stderr or r.stdout).strip()[-200:]}")
+    os.chmod(tmp, 0o400)
+    os.replace(tmp, cred)
+    gate_tls_mode("acme" if token else "internal")
+    if caddy_restart():
+        out({"ok": True, "tokenSet": bool(token)})
+        return
+    # The plugin refused the token (or Caddy failed otherwise): back to the router's own
+    gate_tls_mode("internal")
+    caddy_restart()
+    log = run(["journalctl", "-u", "caddy.service", "-n", "5", "--no-pager", "-o", "cat"]).stdout.strip()
+    if token:
+        log = log.replace(token, "[token]")   # some plugins quote the token they reject
+    fail(f"Caddy wouldn't start with that token, so the router's own certificate is back in use. {log[-300:]}")
+
+
+def cmd_gate_totp_begin(a):
+    """stdin {"current"}: a new TOTP key in the gate (replaces the old one), for the
+    authenticator app. Returns the otpauth URI and a QR code."""
+    gate_on()
+    user = admin_user()
+    gate_require_password(user, stdin_json())
+    outp = authelia_cli("storage", "user", "totp", "generate", user, "--force",
+                        "--issuer", f"HeliOS ({CFG.get('hostName', 'helios')})")
+    m = re.search(r"otpauth://[^\s'\"<>]+", outp)
+    uri = m.group(0) if m else None
+    if not uri:
+        fail("Authelia didn't return a TOTP key")
+    secret = urllib.parse.parse_qs(urllib.parse.urlparse(uri).query).get("secret", [""])[0]
+    write_private(os.path.join(TOTP_DIR, f".gate-pending-{user}.json"), json.dumps({"secret": secret, "created": now()}))
+    qr = run(["qrencode", "-t", "SVG", "-o", "-"], input=uri)
+    out({"ok": True, "uri": uri, "secret": secret, "qrSvg": qr.stdout if qr.returncode == 0 else None})
+
+
+def cmd_gate_totp_check(a):
+    """Code on stdin: does the app have the key gate-totp-begin made?"""
+    gate_on()
+    user = admin_user()
+    pending = read_json(os.path.join(TOTP_DIR, f".gate-pending-{user}.json"), {}) or {}
+    code = re.sub(r"\s", "", sys.stdin.read())
+    if not pending.get("secret") or not re.fullmatch(r"\d{6}", code) or not totp_ok(pending["secret"], code):
+        fail("That code doesn't match. Check the phone's clock is right and try the next code")
+    os.remove(os.path.join(TOTP_DIR, f".gate-pending-{user}.json"))
+    out({"ok": True})
+
+
+def gate_would_strand(user, removing):
+    """Turning off the last second factor while the gate enforces would lock
+    everyone out but the rescue port."""
+    if not os.path.exists(GATE_FLAG):
+        return False
+    keys = gate_passkeys(user)
+    totp = gate_has_totp(user)
+    if removing == "totp":
+        return not keys
+    return totp is False and len(keys) <= 1
+
+
+def cmd_gate_totp_remove(a):
+    gate_on()
+    user = admin_user()
+    gate_require_password(user, stdin_json())
+    if gate_would_strand(user, "totp"):
+        fail("That's the last second factor: add a passkey first, or turn the gate off")
+    authelia_cli("storage", "user", "totp", "delete", user)
+    out({"ok": True})
+
+
+def cmd_gate_passkey_remove(a):
+    """stdin {"current", "kid"}."""
+    gate_on()
+    user = admin_user()
+    d = stdin_json()
+    gate_require_password(user, d)
+    kid = str(d.get("kid") or "")
+    if not any(k["kid"] == kid for k in gate_passkeys(user)):
+        fail("No such passkey")
+    if gate_would_strand(user, "passkey"):
+        fail("That's the last second factor: add another passkey or a code first, or turn the gate off")
+    authelia_cli("storage", "user", "webauthn", "delete", "--kid", kid)
+    out({"ok": True})
+
+
+def cmd_gate_enforce(a):
+    """stdin {"current", "on"}: start or stop requiring the gate. On needs the
+    password copied and a passkey or code registered; it also retires the older
+    code check in Cockpit itself (the gate asks for the second factor now)."""
+    gate_on()
+    user = admin_user()
+    d = stdin_json()
+    gate_require_password(user, d)
+    if not d.get("on"):
+        try:
+            os.remove(GATE_FLAG)
+        except FileNotFoundError:
+            pass   # already off
+        out({"ok": True, "enforced": False})
+        return
+    if not gate_synced():
+        fail("Copy the admin password to the gate first")
+    if not gate_passkeys(user) and not gate_has_totp(user):
+        fail("Register a passkey (recommended) or a code first")
+    write_private(GATE_FLAG, f"{now()}\n", 0o640)
+    if os.geteuid() == 0:
+        try:
+            os.chown(GATE_FLAG, 0, pwd.getpwnam("caddy").pw_gid)
+        except KeyError:
+            pass   # no caddy group: the gate service isn't applied yet
+    retired = False
+    for f in (totp_file(user), totp_pending_file(user)):
+        if os.path.exists(f):
+            os.remove(f)
+            retired = True
+    out({"ok": True, "enforced": True, "retiredCockpitCode": retired})
+
+
+def cmd_gate_off(a):
+    """Recovery from SSH, the console or the installer's recovery shell: stop
+    requiring the gate (Cockpit then asks for the password only)."""
+    try:
+        os.remove(GATE_FLAG)
+    except FileNotFoundError:
+        pass   # already off
+    out({"ok": True, "enforced": False})
+
+
 # ------------------------------------------------------------------ main
-NO_GIT = {"account", "account-password", "account-2fa-begin", "account-2fa-enable", "account-2fa-disable", "detect", "reboot-status", "reboot", "reboot-window", "reboot-check", "unit-failed", "recover", "logwatch", "logwatch-model-get", "logwatch-model-fetch", "logwatch-model-remove", "logwatch-guard", "logwatch-resume", "services", "printing", "printer-models", "printer-test", "printer-pause", "print-cancel", "upnp-close", "qos-suggest", "remote-wg-rotate", "remote-wg-import", "ups-event", "ups-forward", "vulnix-report", "notify-setup", "notify-credentials", "notify-info", "notify-test", "notify-recent", "uplink-check", "counters", "vnstat", "qos", "upnp-clear"}
+NO_GIT = {"gate-dns-token", "gate", "gate-sync", "gate-code", "gate-ca", "gate-totp-begin", "gate-totp-check", "gate-totp-remove", "gate-passkey-remove", "gate-enforce", "gate-off", "account", "account-password", "account-2fa-begin", "account-2fa-enable", "account-2fa-disable", "detect", "reboot-status", "reboot", "reboot-window", "reboot-check", "unit-failed", "recover", "logwatch", "logwatch-model-get", "logwatch-model-fetch", "logwatch-model-remove", "logwatch-guard", "logwatch-resume", "services", "printing", "printer-models", "printer-test", "printer-pause", "print-cancel", "upnp-close", "qos-suggest", "remote-wg-rotate", "remote-wg-import", "ups-event", "ups-forward", "vulnix-report", "notify-setup", "notify-credentials", "notify-info", "notify-test", "notify-recent", "uplink-check", "counters", "vnstat", "qos", "upnp-clear"}
 
 
 def main():
@@ -4701,7 +5075,11 @@ def main():
     sub.add_parser("ups-forward").set_defaults(fn=cmd_ups_forward)
     for nm, fn in (("account", cmd_account), ("account-password", cmd_account_password),
                    ("account-2fa-begin", cmd_account_2fa_begin), ("account-2fa-enable", cmd_account_2fa_enable),
-                   ("account-2fa-disable", cmd_account_2fa_disable)):
+                   ("account-2fa-disable", cmd_account_2fa_disable),
+                   ("gate", cmd_gate), ("gate-sync", cmd_gate_sync), ("gate-code", cmd_gate_code), ("gate-ca", cmd_gate_ca),
+                   ("gate-totp-begin", cmd_gate_totp_begin), ("gate-totp-check", cmd_gate_totp_check),
+                   ("gate-totp-remove", cmd_gate_totp_remove), ("gate-passkey-remove", cmd_gate_passkey_remove),
+                   ("gate-enforce", cmd_gate_enforce), ("gate-off", cmd_gate_off), ("gate-dns-token", cmd_gate_dns_token)):
         sub.add_parser(nm).set_defaults(fn=fn)
     x = sub.add_parser("vulnix-report")
     x.add_argument("file")

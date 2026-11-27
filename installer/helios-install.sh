@@ -67,9 +67,12 @@ o_print=$(b "  Print server (CUPS)" n)
 o_remote=$(b "  Remote access / Heliosphere (WireGuard, OpenVPN, proxy)" n)
 if [ -n "$online" ]; then
   o_logai=$(b "  Log AI (local LLM log triage; needs a model file later)" n)
+  # Passkeys are HeliOS's preferred second factor (see the note at the end)
+  o_gate=$(b "  Passkey sign-in (recommended second factor; you add your key after install)" y)
 else
   o_logai=false
-  echo "  Log AI: needs a download, so turn it on later (Photosphere → Advanced) once online."
+  o_gate=false
+  echo "  Log AI and Passkey sign-in need a download: turn them on later (Photosphere → Advanced → Services) once online."
 fi
 
 cat <<SUMMARY
@@ -78,7 +81,7 @@ cat <<SUMMARY
   disk      /dev/$disk  (ERASED: 1 GiB EFI + ${swap} GiB swap + $fs root)
   hostname  $host.$domain     admin  $user
   trunk     $trunk ($trunkMac), WAN VLAN $wanVlan
-  tailscale $o_tailscale${login:+ via $login}  notifications $o_notify  printing $o_print  remote $o_remote  logAI $o_logai
+  tailscale $o_tailscale${login:+ via $login}  notifications $o_notify  printing $o_print  remote $o_remote  logAI $o_logai  passkeys $o_gate
   software  $(if [ -n "$updates" ]; then echo "newest HeliOS and NixOS (downloaded)"; else echo "the versions on this image"; fi)
 SUMMARY
 confirm=$(ask "Type the disk name ($disk) to erase it and install" "")
@@ -159,6 +162,7 @@ toggle() {  # toggle <block> <true|false>: the first `enable =` inside `<block> 
 [ -z "$login" ] || sed -i "s|loginServer = null;|loginServer = \"$(esc "$login")\";|" "$s"
 toggle tailscale "$o_tailscale"; toggle solarWind "$o_notify"; toggle printing "$o_print"; toggle logwatch "$o_logai"
 sed -i "s/heliosphere\.enable = \(true\|false\);/heliosphere.enable = $o_remote;/" "$s"
+sed -i "s/gate\.enable = \(true\|false\);/gate.enable = $o_gate;/" "$s"
 
 # configDir is a git checkout (Photosphere commits state.json changes)
 git -C "$cfg" init -q
@@ -207,7 +211,13 @@ Done. Remove the USB stick and reboot. Then:
   - Plug the trunk port ($trunk) into your switch's trunk; the modem's port goes in VLAN $wanVlan.
   - Open Cockpit on https://$host.$domain:9090 from a trusted-network device.
   - Your config is in /etc/nixos (a git repo). Edit site.nix for anything not in Photosphere.
-  - Photosphere → Advanced → Admin account: change the password, turn on two-factor sign-in.
+
+Second factor — passkeys recommended:
+  Passkeys are HeliOS's preferred second factor. Any passkey works: the one built
+  into your phone or computer, a password manager like Bitwarden, or a hardware key
+  (YubiKey, pico-fido…). It can't be phished, and you type the admin password once. A code from an authenticator app also works, as a
+  fallback: it's weaker, and with the sign-in gate you type the password twice.
+  $(if [ "$o_gate" = true ]; then echo "Set it up in Photosphere → Advanced → Admin account (Passkey sign-in)."; else echo "Turn on Passkey sign-in in Photosphere → Advanced → Services, then set it up under Admin account."; fi)
 DONE
 if [ -t 0 ] && yesno "Reboot now (remove the USB stick first)" y; then
   umount -R /mnt 2>/dev/null || true

@@ -17,6 +17,7 @@ let
     printing = cfg.printing.enable;
     remote = cfg.heliosphere.enable;
     logwatch = cfg.logwatch.enable;
+    gate = cfg.gate.enable;
   };
   on = id: ((state.services or { }).${id} or { }).enabled or serviceDefaults.${id};
   state = cfg.state;
@@ -79,6 +80,40 @@ in
   options.helios = {
     hostName = mkOption { type = types.str; default = "helios"; description = "Router hostname (also <hostName>.<domain>)."; };
     domain = mkOption { type = types.str; default = "home.arpa"; description = "Local DNS suffix handed out by DHCP. home.arpa is the standard for homes."; };
+
+    gate = {
+      enable = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Sign-in gate (Authelia + Caddy) in front of Cockpit: passkeys (preferred) or a code as the second factor. Usually switched on in Photosphere → Advanced → Services.";
+      };
+      domain = mkOption {
+        type = types.nullOr (types.strMatching "([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]{2,63}");
+        default = null;
+        example = "helios.example.com";
+        description = ''
+          Your own name for the router's sign-in page, under a domain whose DNS is at
+          `acme.dnsProvider` (Cloudflare, or deSEC, which also gives free
+          yourname.dedyn.io names). The router gets a Let's Encrypt certificate for it (through a DNS
+          record, so nothing is exposed), and browsers trust it without installing the
+          router's own certificate. The router answers this name on your networks.
+          Set the provider's API token in Photosphere → Advanced (Passkey sign-in); it
+          stays on the router, never in git. Until a certificate is issued, and if renewal keeps
+          failing, the router's own certificate is used. Passkeys are tied to this name:
+          changing it means registering them again. null = <hostName>.<domain>.
+        '';
+      };
+      acme.dnsProvider = mkOption {
+        type = types.enum [ "cloudflare" "desec" ];
+        default = "cloudflare";
+        description = "Where the domain's DNS is hosted: cloudflare, or desec (deSEC, free dedyn.io names).";
+      };
+      acme.email = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Optional e-mail for the Let's Encrypt account (expiry warnings).";
+      };
+    };
 
     admin = {
       user = mkOption { type = types.str; description = "Your login on the router (wheel, SSH)."; };
@@ -252,6 +287,7 @@ in
     environment.etc."helios/config.json".text = builtins.toJSON {
       inherit (cfg) hostName domain configDir stateFile;
       admin = { inherit (cfg.admin) user; sshKeys = builtins.length cfg.admin.sshKeys; totpDir = "/var/lib/helios/totp"; inherit (config.users) mutableUsers; };
+      gate = cfg.internal.gate // { rescue = cfg.interfaces.rescueMac != null; };
       inherit (cfg.interfaces) wanVlan;
       networks = networks;
       roles = catalog.roles;

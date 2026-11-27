@@ -389,3 +389,15 @@ th.pause-col, td.pause-col { width: 1%; padding-right: 0; }
 .switch:has(> span > div), .modal .switch { align-items: flex-start; }
 .modal .switch input { margin-top: 1px; }
 .field > .help { display: block; }
+
+/* Passkey sign-in: setup checklist (Advanced → Admin account) */
+.acct-stack { display: flex; flex-direction: column; gap: 16px; }
+.gate-steps { list-style: none; margin: 12px 0 8px; padding: 0; counter-reset: gate; }
+.gate-step { padding: 10px 0; border-top: 1px solid var(--line-soft); }
+.gate-step:first-child { border-top: 0; }
+.gate-step > .status { font-weight: 600; }
+.gate-step-body { margin: 4px 0 0 22px; }
+.gate-step-body p { margin: 2px 0 8px; }
+.gate-step-body .list { margin-bottom: 8px; }
+.steps { margin: 6px 0 10px; padding-left: 22px; }
+.steps > li { margin: 0 0 10px; }

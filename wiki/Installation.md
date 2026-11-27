@@ -30,8 +30,8 @@ If it does find internet (a cable with DHCP on any port), the installer first as
   fails, it falls back to the image's versions.
 * **no**: it installs the versions on the image, downloading only what isn't on it.
 
-Log AI is the one choice that needs a download, so without internet the installer
-doesn't offer it; turn it on later in Photosphere.
+Log AI and Passkey sign-in need a download, so without internet the installer
+doesn't offer them; turn them on later in Photosphere (Advanced → Services).
 
 Write the image to a USB stick and boot the router from it. The boot menu has two
 entries:
@@ -57,7 +57,7 @@ The installer asks, in order:
 | SSH key | One public key line, or empty | empty |
 | Trunk | The port cabled to the switch trunk, chosen from a list with MAC addresses | none |
 | WAN VLAN | Switch VLAN the modem's port is in | `10` |
-| Software | Tailscale (and an optional Headscale URL, which must start with `https://`), Notifications, Print server, Remote access, Log AI | Tailscale and Notifications yes, others no |
+| Software | Tailscale (and an optional Headscale URL, which must start with `https://`), Notifications, Print server, Remote access, Log AI, Passkey sign-in | Tailscale, Notifications and Passkey sign-in yes, others no |
 
 It then prints a summary. Nothing is written until you type the disk's name to confirm. After that it:
 
@@ -70,7 +70,7 @@ It then prints a summary. Nothing is written until you type the disk's name to c
 
 The installed router follows `github:helios-router/helios` for updates. Unless you chose to download updates, its `flake.lock` starts pinned to the exact HeliOS and nixpkgs versions on the image, and those sources are copied onto the router, so it can rebuild before it ever goes online; `nix flake update` moves it to the latest. The boot loader is systemd-boot.
 
-After the first sign-in, change the password or turn on two-factor sign-in under Photosphere → Advanced → [Admin account](Page-Advanced#admin-account-card).
+The installer ends by recommending a second factor, and says which: **passkeys are HeliOS's preferred second factor** (any passkey: built into a phone or computer, a password manager like Bitwarden, or a hardware key). Set it up after the first sign-in under Photosphere → Advanced (step by step in [Passkey Sign-In](Passkey-Sign-In)); a code from an authenticator app is the fallback.
 
 ### Recovery shell
 
@@ -81,7 +81,8 @@ Boot the installer stick and pick **Recovery shell** to get a root shell (no wiz
 | `helios-mount` | Finds the installed system by its partition labels (`nixos`, `ESP`, `swap`) and mounts it at `/mnt`, btrfs subvolumes included |
 | `nixos-enter --root /mnt` | A root shell inside the installed system |
 | `passwd <admin>` (inside) | Reset the admin password |
-| `rm /var/lib/helios/totp/<admin>` (inside) | Turn off two-factor sign-in for Cockpit |
+| `rm /var/lib/helios/totp/<admin>` (inside) | Turn off the code Cockpit asks for |
+| `helios-ctl gate-off` (inside) | Stop requiring passkey sign-in (the gate) |
 | `nix-env -p /nix/var/nix/profiles/system --rollback && /nix/var/nix/profiles/system/bin/switch-to-configuration boot` (inside) | Make the previous generation the default boot entry |
 
 The systemd-boot menu on the router also lists earlier generations, which is usually the quicker way back from a bad update.

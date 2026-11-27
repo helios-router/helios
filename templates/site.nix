@@ -40,6 +40,10 @@
     # Second, DNS-filtered exit node for family devices
     heliosphere.enable = false;
 
+    # Passkey sign-in for Photosphere (Authelia gate). Usually switched on later in
+    # Photosphere → Advanced → Services, then set up under Admin account.
+    gate.enable = false;
+
     solarWind = {
       enable = true;
       # local  = reachable from admin networks (trusted/mgmt by default) and Tailscale only

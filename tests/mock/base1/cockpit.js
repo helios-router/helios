@@ -30,11 +30,12 @@
   const T0 = Date.now() / 1000;
   // Services (pkgs/services.json): site.nix defaults + overrides; tabs follow the *applied* state
   const SCAT = (() => { const x = new XMLHttpRequest(); x.open("GET", "../services.json", false); x.send(); return JSON.parse(x.responseText); })();
-  const SVC_DEFAULTS = { notifications: true, vulnScan: true, printing: true, remote: true, logwatch: false };
+  const SVC_DEFAULTS = { notifications: true, vulnScan: true, printing: true, remote: true, logwatch: false, gate: false };
   let svcOver = {}, svcOver0 = {};
   let restrictUnnamed = false, restrictUnnamed0 = false;
   let maint = { rebootWindow: { enabled: false, days: ["sun"], time: "04:00" } }, maint0 = JSON.parse(JSON.stringify(maint));
   let account = { totp: false, pending: null };
+  let gate = { synced: false, enforced: false, passkeys: [], totp: false };
   let lwState = {}, lwState0 = {}, lwFiles = { "model.gguf": 1107409472 }, lwDl = null,
     lwPaused = { since: T0 - 3600, until: T0 + 5 * 3600, reason: "CPU pressure 52%" };
   const svcOn = (id, over = svcOver) => (over[id] ?? SVC_DEFAULTS[id]);
@@ -737,6 +738,38 @@
       case "account-2fa-enable": if (!account.pending) return { ok: false, error: "The setup expired: start again" };
         if (!/^\d{6}$/.test((stdin || "").trim())) return { ok: false, error: "Enter the 6-digit code from the app" };
         account = { totp: true, pending: null }; return { ok: true, user: "admin", recoveryCodes: ["40912377", "18350264", "77201946", "50388412", "93016655"] };
+      case "gate": {
+        const enabled = svcOn("gate");
+        return { ok: true, enabled, url: "https://helios.home.arpa:9090", fqdn: "helios.home.arpa", rescue: true, legacyTotp: account.totp,
+          enforced: enabled && gate.enforced, synced: enabled && gate.synced, passkeys: enabled ? gate.passkeys : [], totp: enabled && gate.totp,
+          error: null, autheliaVersion: "4.39.28", ca: true,
+          certificate: { domain: null, provider: null, tokenSet: false, issuer: "router", expires: null } };
+      }
+      case "gate-sync": { const d = JSON.parse(stdin || "{}"); if (!d.current) return { ok: false, error: "The current password is wrong" };
+        gate.synced = true;
+        // the demo has no browser key ceremony: pretend one was registered later
+        setTimeout(() => { if (!gate.passkeys.length) gate.passkeys = [{ kid: "demo1", description: "pico-fido", created: new Date().toISOString(), lastUsed: null, discoverable: true, verified: true }]; }, 4000);
+        return { ok: true, user: "admin" }; }
+      case "gate-dns-token": return { ok: false, error: "No own domain set: helios.gate.domain in site.nix" };
+      case "gate-code": return { ok: true, code: "7XKQ2M9P", sent: new Date().toISOString().slice(0, 19).replace("T", " "), text: null };
+      case "gate-ca": return { ok: true, pem: "-----BEGIN CERTIFICATE-----\nDEMO\n-----END CERTIFICATE-----\n", filename: "helios-demo-ca.crt" };
+      case "gate-totp-begin": { const d = JSON.parse(stdin || "{}"); if (!d.current) return { ok: false, error: "The current password is wrong" };
+        gate.totp = true;
+        return { ok: true, uri: "otpauth://totp/HeliOS:admin?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", secret: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+          qrSvg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21 21"><path d="M0 0h7v7H0zM14 0h7v7h-7zM0 14h7v7H0zM9 9h3v3H9z"/></svg>' }; }
+      case "gate-totp-check": return /^\d{6}$/.test((stdin || "").trim()) ? { ok: true } : { ok: false, error: "That code doesn't match. Check the phone's clock is right and try the next code" };
+      case "gate-totp-remove": { const d = JSON.parse(stdin || "{}"); if (!d.current) return { ok: false, error: "The current password is wrong" };
+        if (gate.enforced && !gate.passkeys.length) return { ok: false, error: "That's the last second factor: add a passkey first, or turn the gate off" };
+        gate.totp = false; return { ok: true }; }
+      case "gate-passkey-remove": { const d = JSON.parse(stdin || "{}"); if (!d.current) return { ok: false, error: "The current password is wrong" };
+        if (gate.enforced && !gate.totp && gate.passkeys.length <= 1) return { ok: false, error: "That's the last second factor: add another passkey or a code first, or turn the gate off" };
+        gate.passkeys = gate.passkeys.filter(k => k.kid !== d.kid); return { ok: true }; }
+      case "gate-enforce": { const d = JSON.parse(stdin || "{}"); if (!d.current) return { ok: false, error: "The current password is wrong" };
+        if (!d.on) { gate.enforced = false; return { ok: true, enforced: false }; }
+        if (!gate.synced) return { ok: false, error: "Copy the admin password to the gate first" };
+        if (!gate.passkeys.length && !gate.totp) return { ok: false, error: "Register a passkey (recommended) or a code first" };
+        const retired = account.totp; account = { totp: false, pending: null }; gate.enforced = true;
+        return { ok: true, enforced: true, retiredCockpitCode: retired }; }
       case "account-2fa-disable":
         if (account.totp && !/^(\d{6}|\d{8})$/.test((stdin || "").trim())) return { ok: false, error: "That code doesn't match. Enter the current code from the app, or a recovery code" };
         account = { totp: false, pending: null }; return { ok: true, user: "admin" };

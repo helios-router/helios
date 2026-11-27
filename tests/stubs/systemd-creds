@@ -1,0 +1,11 @@
+#!/bin/sh
+# systemd-creds encrypt --with-key=host --name=NAME - OUT: "encrypts" stdin as ENC(NAME):<data>
+[ "$1" = encrypt ] || exit 1
+name=""; out=""
+for a in "$@"; do
+  case "$a" in --name=*) name=${a#--name=} ;; esac
+  out=$a   # the last argument is the output file
+done
+printf 'ENC(%s):' "$name" > "$out"
+cat >> "$out"
+echo "systemd-creds $*" >> "${STUB_LOG:-/dev/null}"

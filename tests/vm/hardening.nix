@@ -9,7 +9,15 @@
 #  - Admin account: Cockpit's PAM service asks for the password, then a TOTP
 #    code once two-factor sign-in is on (set up through helios-ctl, as
 #    Photosphere does); wrong passwords stop before the code's rate limit;
-#    recovery codes work once; changes need the current password or code.
+#    recovery codes work once; changes need the current password or code;
+#  - Sign-in gate (Authelia + Caddy): Cockpit only on localhost; once required,
+#    no session = no Cockpit; password + code at the gate gets through; other
+#    names redirect to the router's own; gate-off lets everyone straight in.
+#    Authelia starting at all checks it still accepts the passkey settings
+#    (experimental_enable_passkey_uv_two_factors) that make a passkey enough;
+#  - Own-domain certificate: the DNS token is kept encrypted; a token Caddy's
+#    plugin refuses puts the router's own certificate back (Caddy stays up);
+#    without internet, Let's Encrypt fails and the router's own certificate serves.
 { self }:
 
 let
@@ -28,9 +36,11 @@ in
       imports = [ (common.router self) ];
       virtualisation.memorySize = 3072;
       # Sign in through Cockpit's PAM service from the shell; compute TOTP codes
-      environment.systemPackages = [ pkgs.pamtester pkgs.oath-toolkit ];
+      environment.systemPackages = [ pkgs.pamtester pkgs.oath-toolkit pkgs.openssl ];
       helios.logwatch.enable = lib.mkOverride 40 true;
       helios.heliosphere.enable = lib.mkOverride 40 true;
+      helios.gate.enable = lib.mkOverride 40 true;   # the optional passkey / two-factor gate
+      helios.gate.domain = "helios.example.test";     # own-domain certificate (no internet here: the fallback)
       # Client configs need a host to point at (the WAN address would do, with a warning)
       helios.heliosphere.publicHost = "vpn.example.test";
       helios.state = lib.mkOverride 40 (lib.recursiveUpdate
@@ -205,5 +215,95 @@ in
         assert ctl("account-2fa-disable", recovery[1])["ok"]
         assert not ctl("account")["totp"]
         assert login("second-password-2"), "password-only sign-in failed after turning two-factor off"
+
+    with subtest("Sign-in gate: Authelia in front of Cockpit"):
+        router.wait_for_unit("authelia-helios.service")
+        router.wait_for_unit("caddy.service")
+        listen = router.succeed("ss -Htlnp")
+        print(listen)
+        # Cockpit is socket-activated: systemd holds its socket, on localhost only
+        sock = router.succeed("systemctl show -p Listen --value cockpit.socket").split()
+        print(sock)
+        addrs = [x for x in sock if not x.startswith("(")]
+        assert addrs == ["127.0.0.1:9089"], f"Cockpit's socket isn't localhost-only: {sock}"
+        assert "127.0.0.1:9089" in listen and not any(":9089" in l and "127.0.0.1:9089" not in l for l in listen.splitlines()), "Cockpit listens beyond localhost"
+        assert any(":9090" in l and "caddy" in l for l in listen.splitlines()), "Caddy isn't serving :9090"
+        fqdn = "helios.example.test"   # helios.gate.domain: the sign-in page's name
+        base = f"https://{fqdn}:9090"
+        jar = "/tmp/gate-cookies"
+        def curl(path, *opts, host=fqdn):
+            return router.succeed(f"curl -sk --resolve {host}:9090:127.0.0.1 -o /tmp/body -w '%{{http_code}} %{{redirect_url}}' {' '.join(opts)} https://{host}:9090{path}").split(" ", 1)
+        def dump(why):
+            # What Caddy and Cockpit answered, and their logs, before failing
+            for cmd in (f"curl -sk -D - -o /tmp/dump --resolve {fqdn}:9090:127.0.0.1 {base}/; head -c 600 /tmp/dump; echo",
+                        "curl -s -D - -o /dev/null -H 'X-Forwarded-Proto: https' http://127.0.0.1:9089/",
+                        "readlink /var/lib/helios-gate/tls.caddy; ls -la /var/lib/helios-gate",
+                        "journalctl -u caddy -u cockpit -u cockpit.socket -u 'cockpit-*' -u helios-gate-init --no-pager -n 60 -o cat"):
+                print(router.execute(cmd)[1])
+            raise Exception(why)
+        # Not required yet: Cockpit straight through (its login page)
+        try:
+            # (to a file first: `curl | grep -q` fails under pipefail when grep stops reading early)
+            router.wait_until_succeeds(f"curl -sk --resolve {fqdn}:9090:127.0.0.1 -o /tmp/page {base}/ && grep -qi cockpit /tmp/page", timeout=60)
+        except Exception:
+            dump("Cockpit didn't come through Caddy")
+        code, _ = curl("/auth/")
+        assert code == "200", f"gate page: {code}"
+
+        # Copy the admin password to the gate, set up a code, require the gate
+        pw = "second-password-2"
+        assert ctl("gate-sync", json.dumps({"current": pw}))["ok"]
+        b = ctl("gate-totp-begin", json.dumps({"current": pw}))
+        assert b["ok"] and b["uri"].startswith("otpauth://"), b
+        assert ctl("gate-totp-check", totp(b["secret"]))["ok"]
+        g = ctl("gate")
+        assert g["synced"] and g["totp"] and not g["enforced"], g
+        assert ctl("gate-enforce", json.dumps({"current": pw, "on": True}))["enforced"]
+        assert owner_mode("/var/lib/helios-gate/enforced") == "640 root"
+
+        # Required: no session, no Cockpit
+        code, where = curl("/")
+        assert code in ("302", "303", "401") and "cockpit" not in router.succeed("cat /tmp/body").lower(), (code, where)
+        # Other names go to the router's own (passkeys and the cookie need it)
+        code, where = curl("/", host="router")
+        assert code == "302" and where.startswith(base), (code, where)
+
+        # Password + code at the gate (Authelia's API, as its sign-in page uses it)
+        def api(path, body):
+            return router.succeed(f"curl -sk --resolve {fqdn}:9090:127.0.0.1 -b {jar} -c {jar} -H 'Content-Type: application/json' -d '{body}' {base}/auth/api/{path}")
+        router.wait_until_succeeds(f"curl -sk --resolve {fqdn}:9090:127.0.0.1 -c {jar} -H 'Content-Type: application/json' -d '{json.dumps({'username': 'admin', 'password': 'wrong-password-9', 'keepMeLoggedIn': False})}' -o /tmp/ff {base}/auth/api/firstfactor && grep -q KO /tmp/ff", timeout=30)
+        r = api("firstfactor", json.dumps({"username": "admin", "password": pw, "keepMeLoggedIn": False}))
+        assert '"OK"' in r, r
+        code, _ = curl("/", f"-b {jar}")
+        assert code in ("302", "303", "401"), f"one factor got through: {code}"
+        r = api("secondfactor/totp", json.dumps({"token": totp(b["secret"])}))
+        assert '"OK"' in r, r
+        code, _ = curl("/", f"-b {jar}")
+        assert code == "200" and "cockpit" in router.succeed("cat /tmp/body").lower(), f"password + code didn't reach Cockpit: {code}"
+
+        # Locked out? gate-off (SSH / console) lets everyone straight in again
+        assert ctl("gate-off")["ok"]
+        code, _ = curl("/")
+        assert code == "200", code
+
+    with subtest("Own-domain certificate: encrypted token, switch-back, fallback"):
+        pw = "second-password-2"
+        r = ctl("gate-dns-token", json.dumps({"current": pw, "token": "not-a-token.too.short"}))
+        assert not r["ok"] and "back in use" in r["error"], r
+        assert "not-a-token" not in r["error"], "the refused token was echoed back"
+        router.succeed("systemctl is-active caddy.service")
+        assert router.succeed("readlink /var/lib/helios-gate/tls.caddy").strip().endswith("gate-tls-internal.caddy")
+        assert not ctl("gate")["certificate"]["tokenSet"]
+        fake = "x" * 40   # the shape Cloudflare's plugin accepts; not a real token
+        assert ctl("gate-dns-token", json.dumps({"current": pw, "token": fake}))["ok"]
+        router.succeed("systemctl is-active caddy.service")
+        assert ctl("gate")["certificate"]["tokenSet"]
+        assert fake not in router.succeed("cat /var/lib/helios-gate/dns-token.cred"), "token stored in the clear"
+        assert owner_mode("/var/lib/helios-gate/dns-token.cred") == "400 root"
+        # No internet in the test: Let's Encrypt fails, the router's own certificate serves
+        router.wait_until_succeeds("curl -sk --resolve helios.example.test:9090:127.0.0.1 -o /dev/null -w '%{http_code}' https://helios.example.test:9090/ | grep -q 200", timeout=90)
+        issuer = router.succeed("echo | openssl s_client -connect 127.0.0.1:9090 -servername helios.example.test 2>/dev/null | openssl x509 -noout -issuer")
+        assert "Caddy Local Authority" in issuer, issuer
+        assert "helios.example.test" in router.succeed("getent hosts helios.example.test"), "the router doesn't answer its own domain"
   '';
 }

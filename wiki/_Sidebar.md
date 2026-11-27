@@ -4,6 +4,7 @@
 * [How It Works](How-It-Works)
 * [Configuration](Configuration)
 * [Installation](Installation)
+* [Passkey Sign-In](Passkey-Sign-In)
 * [Updates and Security](Updates-and-Security)
 * [Development](Development)
 
