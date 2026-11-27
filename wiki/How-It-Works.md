@@ -58,8 +58,10 @@ Two nftables tables, `heliopause` and `heliopause-nat`, both policy-drop on inpu
 
 Input (traffic to the router):
 
-* loopback accepted; the rescue address answers only on the rescue port;
-* established and related accepted, invalid dropped; ICMP accepted, with WAN echo requests above 10 per second dropped;
+* loopback accepted; the rescue address answers only on the rescue port, and the rescue subnet is accepted only from it;
+* source-address check: a non-admin network may only send from its own subnet (or `0.0.0.0`, a DHCP request) and, over IPv6, from a prefix the router routes to it;
+* invalid dropped, related accepted, replies to the router's own connections accepted. A client's packets on an open connection go through the rules below again, so taking away a network's admin access also ends its open SSH and Cockpit sessions;
+* ICMP accepted, with WAN echo requests above 10 per second dropped;
 * on non-admin networks, TCP to the trap ports (22, 23, 80, 443, 2222, 3000, 8080, 8090, 9090, and the notification port when Solar Wind is on) is dropped, and the source is added to a set and logged once per hour with the prefix `heliopause-trap:`. DNS, DHCP and NTP keep working;
 * admin networks, the rescue port and `tailscale0` are accepted;
 * WAN accepts DHCPv6 replies and, when Tailscale is enabled, UDP 41641.
@@ -67,13 +69,13 @@ Input (traffic to the router):
 Forward (traffic through the router):
 
 1. devices in the `cutoff` set (paused devices) are rejected or dropped, so pausing also kills open connections;
-2. established and related accepted;
-3. anti-spoofing: a non-admin network may only send from its own subnet;
+2. anti-spoofing, before connection tracking (conntrack matches addresses and ports, not the interface, so a spoofed copy of another network's open connection would otherwise pass): a non-admin network may only send from its own subnet and, over IPv6, from a prefix the router routes to it; the rescue subnet only from the rescue port;
+3. invalid dropped, related and replies accepted. The side that opened a connection goes through the rules below on every packet, so a policy change (reach, internet, quarantine, a removed port forward) also applies to connections that are already open;
 4. unnamed devices on `quarantine` networks are sent to a restricted chain;
 5. bypass blocking for `filtered` networks;
 6. Tailscale (`tailscale0`) reaches every network;
 7. `reach` rules;
-8. connections that UPnP or NAT-PMP port forwards created on `wan`;
+8. connections that UPnP or NAT-PMP port forwards created on `wan`, only towards `upnp` networks (and the WireGuard / OpenVPN ports towards Heliosphere);
 9. Heliosphere clients may reach only the home networks their way in allows;
 10. media pinholes and casting;
 11. `internet`: accept to `wan`; anything not allowed above is dropped.
