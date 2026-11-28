@@ -124,6 +124,21 @@ in
         # helios-ctl edits the state file in configDir, as Photosphere does
         router.succeed("mkdir -p /etc/nixos && cp ${builtins.toFile "state.json" (builtins.toJSON nodes.router.helios.state)} /etc/nixos/state.json")
 
+    with subtest("Remote access: the container's own firewall re-checks open connections"):
+        # The order tests/netns/heliosphere.py models: IPv6 refused first, then only
+        # replies accepted up front, so the per-way-in home-network rules (and the
+        # kill switch) apply to connections that are already open
+        fwd = container("nft list chain inet heliosphere forward").splitlines()
+        hs_rules = [l.strip() for l in fwd if l.strip() and not l.strip().startswith(("table", "chain", "type", "}"))]
+        print("\n".join(hs_rules))
+        assert not any("ct state vmap" in r and "established" in r for r in hs_rules), "established accepted before the rules again"
+        assert hs_rules[0].startswith("meta nfproto ipv6 reject"), f"IPv6 isn't refused first: {hs_rules[0]!r}"
+        reply = next(i for i, r in enumerate(hs_rules) if r.startswith("ct direction reply ct state established accept"))
+        lans = next(i for i, r in enumerate(hs_rules) if r.startswith("ip daddr {") and r.endswith("drop"))
+        assert reply < lans, "replies aren't accepted before the home-network rules"
+        hs_out = container("nft list chain inet heliosphere output")
+        assert "meta nfproto ipv6" in hs_out and "reject" in hs_out, "the container's own IPv6 isn't refused"
+
     with subtest("OpenVPN: client added, CRL readable only by OpenVPN, server runs as heliosphere-ovpn"):
         res = json.loads(router.succeed("helios-ctl remote-ovpn-add phone"))
         assert res["ok"] and "<key>" in res["config"], res.get("error")

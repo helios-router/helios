@@ -8,6 +8,18 @@ track `main` through the flake, and the commit hash is the version.
 ## [Unreleased]
 
 ### Security
+- Remote access (Heliosphere): the container checks the side that opened a
+  connection on every packet, as Heliopause does. Taking a home network away from
+  one way in cuts that way's open connections, even while another way in keeps it.
+  The kill switch also checks open connections now. It held already, because
+  masquerading on the tunnel stops them (tested).
+- Remote access is IPv4-only inside the container too. Before, clients' IPv6
+  (such as Tailscale exit-node traffic) could pass through a way out that has
+  IPv6, past the DNS redirect and the DoH block.
+- Proxy way out: replies to WireGuard and OpenVPN clients take their own routes
+  instead of going back into the proxy.
+- The installer explains that Tailscale is an admin door and asks for an
+  explicit yes before turning it on.
 - Heliopause checks source addresses before connection tracking. Conntrack
   matches by addresses and ports, not by interface, so a device on a non-admin
   network could inject packets into another network's open connections. Non-admin

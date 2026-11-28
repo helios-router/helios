@@ -49,6 +49,8 @@ jobs:
       # Heliopause's conntrack ordering against the real kernel, in throwaway namespaces
       - run: sudo apt-get install -y --no-install-recommends nftables
       - run: sudo HELIOS_NETNS_REQUIRE_FORWARD=1 "$(command -v python)" -I tests/netns/conntrack.py
+      # Heliosphere: kill switch, per-way-in access, IPv6 and DNS, in throwaway namespaces
+      - run: sudo HELIOS_NETNS_REQUIRE_FORWARD=1 "$(command -v python)" -I tests/netns/heliosphere.py
       - run: shellcheck -s bash installer/helios-install.sh tests/*.sh pkgs/*.sh
 
   browsers:

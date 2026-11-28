@@ -60,6 +60,17 @@ config wifi-station
 
 Recent OpenWrt releases can do the same with WPA3 (SAE). Check the documentation for your release.
 
+**Asus (Asuswrt and Asuswrt-Merlin)** has no PPSK. Most Asus routers use Broadcom's own Wi-Fi software rather than hostapd, so the OpenWrt method above doesn't apply. Use separate Wi-Fi names instead (next paragraph). An old Asus router demoted to an access point can do that in two ways:
+
+1. **Guest Network Pro** (firmware 3006.102 or later, on the models that have it: for example the RT-AX86U **Pro** has it, the plain RT-AX86U doesn't).
+   1. Create one profile per HeliOS network, each with its own Wi-Fi name, password and the network's VLAN ID (20, 30, 40…).
+   2. On the VLAN tab (LAN section), set the port to HeliOS as a **trunk** carrying those profiles. The tab may only let you assign ports once a profile exists.
+   3. Leave **"Use same subnet as main network"** off. With it on, a profile's clients and the main network's clients can reach each other freely, which undoes the VLANs.
+   4. HeliOS hands out the addresses, so the access point must only tag the traffic. Don't turn on DHCP for the profiles. Some people report Guest Network Pro VLANs in AP mode not passing traffic; check with step 1 of [Check that it works](#check-that-it-works) before relying on it.
+2. **MerVLAN**, a Merlin add-on for AP mode that tags each Wi-Fi name and port with a VLAN from a web page. It is still in beta.
+
+For real per-password VLANs on that hardware, check whether OpenWrt supports your exact model, then follow the OpenWrt steps above. Some models are reported to have trouble with the password-to-VLAN mapping. MAC addresses can be tied to each password there too: add `option mac` to a `wifi-station`.
+
 **No PPSK on your access point?** Use **separate Wi-Fi names** instead, such as "Home" (everyday, VLAN 30) and "Home-Admin" (VLAN 20), each with its own password. Every VLAN-aware access point can do this, and HeliOS treats it the same way. Hiding the admin network's name adds nothing: hidden names are easy to find.
 
 ## Check that it works

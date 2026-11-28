@@ -36,6 +36,7 @@
         "eth1",           # trunk port
         "10",             # WAN VLAN
         "y",              # Tailscale
+        "y",              # ...understood that it's an admin door
         "",               # Headscale URL (none)
         "y",              # notifications
         "y",              # print server
