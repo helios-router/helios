@@ -4391,7 +4391,8 @@ def write_private(path, text, mode=0o600, owner=None):
     a service watching it never sees it unreadable."""
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
     tmp = f"{path}.{os.getpid()}.tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+    private_mode = mode & 0o600
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, private_mode)
     try:
         # Owner through the descriptor: the folder may be the owner's own (Authelia's
         # 0700 state dir), and chown by name would follow a link it swapped in
