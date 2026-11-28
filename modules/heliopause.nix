@@ -87,7 +87,7 @@ let
     in
       lib.concatMap (v: map (r: fwd v d.vlan "ip saddr { ${lib.concatStringsSep ", " (ipsOn v)} } ${r}" d.name) dst) clientNets
       ++ lib.concatMap (n: map (r: fwd n d.vlan r d.name) dst) nets)
-    I.mediaServers);
+    I.mediaServers;
   mediaNets = lib.unique (map (d: d.vlan) (builtins.filter isMediaClient I.withIp));
   castFwd = lib.concatMap (c: map (m: fwd c m "ip daddr @media_clients" "casting to TVs") mediaNets) (where (a: a.cast));
 

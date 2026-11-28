@@ -91,6 +91,40 @@ table's connected routes: wg-quick adds `lookup main suppress_prefixlength 0`
 before its tunnel table, and the proxy way out (tun2socks) adds the same rule at
 priority 190. Without it, those replies would follow table 100 back into the proxy.
 
+### Marks and routing rules
+
+Every mark the container's firewall accepts, where it comes from, and what it does.
+None is derived from packet contents, so a client can't choose one. A process
+can set a socket mark only with CAP_NET_ADMIN, and only the root daemons below do.
+
+| Mark | Set by | Meaning, where it's accepted |
+|---|---|---|
+| conntrack 0x1 | `mark_in` (prerouting): a **new** connection arriving on eth0, that is, to the container itself: WireGuard/OpenVPN transport the host forwards from the WAN, proxy users at home | Copied to the packet mark (below) for the container's replies on those connections |
+| packet 0x1 | `mark_out` (route hook), from conntrack 0x1 | Rule 90 sends the reply back via `main` (eth0), past any tunnel; the kill switch (output) lets it out. A proxy user's *outgoing* proxied connection is a new connection of the container's own, without the mark, so it still takes the tunnel |
+| packet 0x2 | OpenVPN's `mark 2` (egress config) and tun2socks' `-fwmark 2`, on their own transport sockets | tun2socks' rule 200 (`not fwmark 0x2`) keeps its transport out of table 100; the kill switch lets it out on eth0 |
+| packet 51820 (0xca6c) | wg-quick, on its own UDP socket | wg-quick's `not fwmark 51820` rule; the kill switch lets it out on eth0 |
+| packet 0x80000 (mask 0xff0000) | tailscaled, on its own transport | Tailscale's own routing rules; the kill switch lets it out on eth0. Clients' exit-node traffic is forwarded, not tailscaled's own, so it goes through the forward chain and its kill switch, which accepts no mark |
+| conntrack 0x8xxxxxxx | each accepting rule in `forward` (`tagOf`) | The rule that allowed a connection; replies and ICMP errors pass only while it's still in the ruleset |
+| conntrack 0x7fffffff | `forward`, on every packet from the opening side, before the rules | "Revoked" until a rule re-tags it |
+
+| Rule (priority) | Added by | Purpose |
+|---|---|---|
+| 80: `to 10.60.0.0/24 lookup main` | `helios-policy-routing` | The host (DNS, the router) stays reachable whatever the tunnel does |
+| 85: `to <home network> lookup main` | `helios-policy-routing`, one per network any way in may reach | Home networks past the tunnel. Routing only: the forward chain decides which way in may use it |
+| 90: `fwmark 0x1 lookup main` | `helios-policy-routing` | Replies to connections that came in on eth0 |
+| 190: `lookup main suppress_prefixlength 0` | tun2socks (proxy way out) | Specific `main` routes (the clients' own subnets) before the tunnel; never `main`'s default route |
+| 200: `not fwmark 0x2 lookup 100` | tun2socks | Everything else into the proxy tunnel (table 100) |
+| wg-quick's own pair (`not fwmark 51820 lookup 51820`, `main suppress_prefixlength 0`) | wg-quick (WireGuard way out) | Everything else into the WireGuard tunnel |
+| OpenVPN | `redirect-gateway def1`: `0/1` and `128/1` via tun-out in `main` | Everything else into the OpenVPN tunnel |
+
+When a tunnel goes away, its routes go with it (wg-quick also removes its rules).
+tun2socks' rules 190/200 stay, harmless: table 100 is empty without its device,
+so the lookup falls through to `main`, whose default route is eth0, where the kill
+switch drops client traffic. `helios-policy-routing` deletes its rules before
+adding them, and `ip rule add` refuses an exact duplicate, so restarts don't pile
+rules up. `tests/vm/killswitch.nix` checks the rule list is the same before and
+after restarting each tunnel.
+
 ## Configuration
 
 `site.nix` (infrastructure, rarely changed):

@@ -37,6 +37,8 @@ in
       virtualisation.memorySize = 3072;
       # Sign in through Cockpit's PAM service from the shell; compute TOTP codes
       environment.systemPackages = [ pkgs.pamtester pkgs.oath-toolkit pkgs.openssl ];
+      # A local account outside wheel, to show helios-ctl does nothing privileged for it
+      users.users.guest = { isNormalUser = true; };
       helios.logwatch.enable = lib.mkOverride 40 true;
       helios.heliosphere.enable = lib.mkOverride 40 true;
       helios.gate.enable = lib.mkOverride 40 true;   # the optional passkey / two-factor gate
@@ -329,5 +331,38 @@ in
         issuer = router.succeed("echo | openssl s_client -connect 127.0.0.1:9090 -servername helios.example.test 2>/dev/null | openssl x509 -noout -issuer")
         assert "Caddy Local Authority" in issuer, issuer
         assert "helios.example.test" in router.succeed("getent hosts helios.example.test"), "the router doesn't answer its own domain"
+
+    with subtest("helios-ctl: an account outside wheel changes nothing, whatever it runs"):
+        # helios-ctl is on everyone's PATH and has no caller check of its own: what
+        # stops a non-admin is that it only gets root through sudo (wheel only)
+        # and everything it changes is root's. Run the privileged commands anyway.
+        watched = ("/etc/shadow /var/lib/heliosphere/wireguard/private /var/lib/heliosphere/wireguard/public "
+                   "/var/lib/helios-gate/enforced /var/lib/authelia-helios/users.yml")
+        def snapshot():
+            return router.succeed(f"sha256sum {watched} 2>&1; ls -la /var/lib/helios-gate /var/lib/helios/totp "
+                                  "/var/lib/heliosphere/egress 2>&1; cat /proc/sys/kernel/random/boot_id")
+        before = snapshot()
+        router.fail("runuser -u guest -- sudo -n true")
+        attempts = [
+            ("gate-off", ""),
+            ("gate-enforce", '{"current": "x", "on": false}'),
+            ("gate-dns-token", '{"current": "x", "token": "abc"}'),
+            ("account-password", '{"current": "x", "new": "a-new-password-123"}'),
+            ("account-2fa-disable", '{"code": "123456"}'),
+            ("remote-wg-rotate", ""),
+            ("remote-egress-upload wireguard", "[Interface]"),
+            ("recover", ""),
+            ("reboot", ""),
+            ("service-set notifications on", ""),
+            ("driver-set '{\"nut\": {\"enabled\": true}}'", ""),
+            ("hardware-set '{}'", ""),
+        ]
+        for cmd, stdin in attempts:
+            status, out = router.execute(f"printf %s '{stdin}' | runuser -u guest -- helios-ctl {cmd} 2>&1")
+            print(f"guest: helios-ctl {cmd} -> exit {status}: {out.strip()[-200:]}")
+            assert '"ok": true' not in out, f"guest: helios-ctl {cmd} claims success: {out}"
+        time.sleep(3)
+        after = snapshot()
+        assert after == before, f"something changed for a non-admin:\n{before}\n---\n{after}"
   '';
 }
