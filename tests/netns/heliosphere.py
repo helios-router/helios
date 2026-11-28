@@ -40,6 +40,7 @@ The real Apply restarts the container (nixpkgs containers: restartIfChanged), wh
 empties its connection table too. These tests reload the rules without a restart,
 so the rules themselves are what's tested.
 """
+import hashlib
 import os
 import subprocess
 import sys
@@ -212,21 +213,46 @@ def policy_rules(mode, proxy_main_rule=True):
 
 
 # ------------------------------------------------------------------ the rules
+def tag_of(text):
+    """heliosphere.nix's tagOf: a rule's connection tag"""
+    return "0x8" + hashlib.sha256(text.encode()).hexdigest()[:7]
+
+
 def container_rules(order, lan, mode=None, killswitch=True):
-    """The container's table from modules/heliosphere.nix. lan: way in -> home networks."""
+    """The container's table from modules/heliosphere.nix. lan: way in -> home networks.
+    order: "old" (before #15), "v15" (#15: replies accepted up front, IPv4 only),
+    "new" (replies only while the connection's rule is still there)."""
     tun = TUN_IF.get(mode)
     new = order == "new"
-    head = ("meta nfproto ipv6 reject with icmpx admin-prohibited\n    ct state invalid drop\n"
-            "    ct direction reply ct state established accept") if new else \
-        "ct state vmap { established : accept, related : accept, invalid : drop }"
-    ways = "".join(f'iifname "{INGRESS[m][1]}" ip daddr {{ {", ".join(n)} }} accept\n    ' for m, n in lan.items() if n)
+    v15 = order in ("v15", "new")
+    lan_rules = [(INGRESS[m][1], net, tag_of(f"lan {INGRESS[m][1]} {net}")) for m, nets in lan.items() for net in nets]
+    ups = ["eth0"] + ([tun] if tun else [])
+    net_rules = [(c, tag_of(f"internet {c}")) for c in (v[1] for v in INGRESS.values())]
+    if new:
+        paths = [p for i, _, t in lan_rules for p in (f'{t} . "eth0" . "{i}"', f'{t} . "{i}" . "eth0"')] + \
+            [p for c, t in net_rules for u in ups for p in (f'{t} . "{u}" . "{c}"', f'{t} . "{c}" . "{u}"')]
+        tags = ", ".join(["0x0"] + [t for _, _, t in lan_rules] + [t for _, t in net_rules])
+        head = ("meta nfproto ipv6 reject with icmpx admin-prohibited\n    ct state invalid drop\n"
+                f"    ct state related ct mark . iifname . oifname {{ {', '.join(paths)} }} accept\n"
+                "    ct state related drop\n"
+                f"    ct direction reply ct state established ct mark {{ {tags} }} accept\n"
+                "    ct direction original ct mark set 0x7fffffff\n"
+                f'    iifname "eth0" ip saddr {{ {", ".join(LANS)} }} drop')
+        ways = "".join(f'iifname "{i}" ip daddr {n} ct mark set {t} accept\n    ' for i, n, t in lan_rules)
+        internet = "\n    ".join(f'iifname "{c}" ct mark set {t} accept' for c, t in net_rules)
+    else:
+        head = ("meta nfproto ipv6 reject with icmpx admin-prohibited\n    ct state invalid drop\n"
+                "    ct direction reply ct state established accept") if v15 else \
+            "ct state vmap { established : accept, related : accept, invalid : drop }"
+        ways = "".join(f'iifname "{INGRESS[m][1]}" ip daddr {{ {", ".join(n)} }} accept\n    ' for m, n in lan.items() if n)
+        internet = ""
     ks = f'oifname "eth0" ip daddr != 10.60.0.1 drop' if tun and killswitch else ""
     out_ks = """oifname "eth0" ip daddr 10.60.0.1 accept
     oifname "eth0" meta mark { 0x1, 0x2, 51820 } accept
     oifname "eth0" meta mark & 0xff0000 == 0x80000 accept
     oifname "eth0" drop""" if tun and killswitch else ""
     out_v6 = ('meta nfproto ipv6 oifname { "eth0"' + (f', "{tun}"' if tun else "") +
-              " } reject with icmpx admin-prohibited") if new else ""
+              " } reject with icmpx admin-prohibited") if v15 else ""
     oifs = '"eth0"' + (f', "{tun}"' if tun else "")
     return f"""flush ruleset
 table inet heliosphere {{
@@ -245,6 +271,7 @@ table inet heliosphere {{
     udp dport 2408 reject
     {ways}ip daddr {{ {", ".join(LANS)} }} drop
     {ks}
+    {internet}
   }}
   chain output {{
     type filter hook output priority filter; policy accept;
@@ -377,6 +404,49 @@ while True:
 """
 
 
+# A home server that logs what each way in sends and, on request, pushes a line
+# to the connection that way opened (identified by its first word, "<way>-...")
+PUSH_SERVER = r"""
+import socket, sys, threading, time
+host, port, log, push = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind((host, port)); s.listen(16)
+out = open(log, "a", buffering=1); conns = {}
+def serve(c, a):
+    for line in c.makefile():
+        conns[line.split("-")[0]] = c
+        out.write(a[0] + " " + line.strip() + "\n")
+        try:
+            c.sendall(b"ack\n")
+        except OSError:
+            pass
+def pusher():
+    seen = 0
+    while True:
+        with open(push) as f:
+            lines = f.read().splitlines()
+        for line in lines[seen:]:
+            way, msg = line.split()
+            try:
+                conns[way].sendall((msg + "\n").encode())
+            except (KeyError, OSError):
+                pass
+        seen = len(lines); time.sleep(0.05)
+threading.Thread(target=pusher, daemon=True).start()
+while True:
+    c, a = s.accept(); threading.Thread(target=serve, args=(c, a), daemon=True).start()
+"""
+
+
+def push_server(name, addr, port):
+    log, push = (os.path.join(TMP, f"push-{name}-{port}-{len(procs)}.{x}") for x in ("log", "push"))
+    write_file(log, "")
+    write_file(push, "")
+    procs.append(bg(name, [PY, "-I", os.path.join(TMP, "push_server.py"), addr, str(port), log, push]))
+    time.sleep(0.3)
+    return log, push
+
+
 def server(name, addr, port, kind):
     log = os.path.join(TMP, f"srv-{name}-{addr}-{port}-{kind}-{len(procs)}.log")
     write_file(log, "")
@@ -397,6 +467,10 @@ class Client:
         write_file(self.go, msg + "\n", "a")
         time.sleep(0.8)
         return self
+
+    def received(self, msg):
+        with open(self.go + ".replies") as f:
+            return msg in f.read().split()
 
     def acks(self):
         with open(self.go + ".replies") as f:
@@ -516,7 +590,7 @@ def run_ingress(order):
         other = next(x for x in INGRESS if x != m)
         ocl = INGRESS[other][0]
         load(container_rules(order, everyone))
-        lan = server("L", "10.20.0.100", 7000, "tcp")
+        lan, push = push_server("L", "10.20.0.100", 7000)
         c = Client(cl, "10.20.0.100", 7000, "tcp").say(f"{m}-before")
         k = Client(ocl, "10.20.0.100", 7000, "tcp").say(f"{other}-before")
         res[f"legit: {m}: reaches the home network while allowed, replies come back"] = \
@@ -524,6 +598,11 @@ def run_ingress(order):
         # Apply: this way in loses the home network, the other keeps it (so the
         # host, which only sees the container as a whole, still allows it)
         load(container_rules(order, {**everyone, m: []}))
+        # The home server speaks first, before the client sends anything
+        write_file(push, f"{m} s-{m}-after\n{other} s-{other}-after\n", "a")
+        time.sleep(0.8)
+        res[f"deny: {m}: the home server can't send on the open connection either"] = not c.received(f"s-{m}-after")
+        res[f"legit: {m}: {other} still gets what the home server sends"] = k.received(f"s-{other}-after")
         c.say(f"{m}-after")
         k.say(f"{other}-after")
         Client(cl, "10.20.0.100", 7000, "tcp").say(f"{m}-new")
@@ -554,11 +633,12 @@ def proxy_routing_without_main_rule():
 def main():
     write_file(os.path.join(TMP, "server.py"), SERVER)
     write_file(os.path.join(TMP, "client.py"), CLIENT)
+    write_file(os.path.join(TMP, "push_server.py"), PUSH_SERVER)
     failed = False
     try:
         forwarding = setup()
         if DRY:
-            for order in ("old", "new"):
+            for order in ("old", "v15", "new"):
                 for mode in ("wireguard", "openvpn", "proxy"):
                     for other in set(TUN_IF.values()):
                         tunnel_device_gone_if(other)
@@ -582,15 +662,15 @@ def main():
         got = proxy_routing_without_main_rule()
         print("INFO: proxy egress with tun2socks' old routing: a WireGuard client "
               + ("gets its replies" if got else "gets NO replies (they go back into the tunnel)"))
-        for order in ("old", "new"):
-            print(f"\n== {order} ordering" + (" (before the fix)" if order == "old" else ""))
+        for order in ("old", "v15", "new"):
+            print(f"\n== {order} ordering" + {"old": " (before #15)", "v15": " (#15, before revocation tags)", "new": ""}[order])
             results = []
             for mode in ("wireguard", "openvpn", "proxy"):
                 results += [(f"{mode} egress: {k}", v) for k, v in run_egress(order, mode).items()]
             results += [(f"ways in: {k}", v) for k, v in run_ingress(order).items()]
             for name, ok in results:
                 deny = ": deny: " in name or name.startswith("deny")
-                tag = "ok" if ok else ("VULNERABLE" if order == "old" and deny else "FAIL")
+                tag = "ok" if ok else ("VULNERABLE" if order != "new" and deny else "FAIL")
                 print(f"  [{tag}] {name}")
                 if not ok and (order == "new" or not deny):
                     failed = True   # the fix doesn't hold, or legitimate traffic broke

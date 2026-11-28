@@ -133,9 +133,13 @@ in
         print("\n".join(hs_rules))
         assert not any("ct state vmap" in r and "established" in r for r in hs_rules), "established accepted before the rules again"
         assert hs_rules[0].startswith("meta nfproto ipv6 reject"), f"IPv6 isn't refused first: {hs_rules[0]!r}"
-        reply = next(i for i, r in enumerate(hs_rules) if r.startswith("ct direction reply ct state established accept"))
+        reply = next(i for i, r in enumerate(hs_rules) if r.startswith("ct direction reply ct state established ct mark"))
         lans = next(i for i, r in enumerate(hs_rules) if r.startswith("ip daddr {") and r.endswith("drop"))
         assert reply < lans, "replies aren't accepted before the home-network rules"
+        # ...and only while the rule that allowed the connection is still there
+        revoke = next(i for i, r in enumerate(hs_rules) if r.startswith("ct direction original ct mark set 0x7fffffff"))
+        assert reply < revoke < lans, "the opening side isn't marked revoked before the rules re-tag it"
+        assert any(r.startswith("ct state related ct mark . iifname . oifname") for r in hs_rules[:reply]), "ICMP errors aren't checked against their connection's path"
         hs_out = container("nft list chain inet heliosphere output")
         assert "meta nfproto ipv6" in hs_out and "reject" in hs_out, "the container's own IPv6 isn't refused"
 

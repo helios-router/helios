@@ -34,6 +34,26 @@ let
   ingressIf = { tailscale = "tailscale0"; wireguard = "wg-in"; openvpn = "tun-in"; };
   lanAny = lib.unique (lib.concatMap lanOf [ "tailscale" "wireguard" "openvpn" ]);
   allLans = map netOf cfg.internal.names;
+  # Connection tags, as in heliopause.nix ("revocation"): every accepting rule
+  # tags its connections; replies pass only while that rule is still here, and
+  # ICMP errors only along the connection's path
+  tagOf = text: "0x8" + builtins.substring 0 7 (builtins.hashString "sha256" text);
+  revoked = "0x7fffffff";
+  clientIfs = map (m: ingressIf.${m}) (builtins.filter (m: R.${m}.enabled) [ "tailscale" "wireguard" "openvpn" ]);
+  upstreams = [ "eth0" ] ++ lib.optional tunnel tunIf;
+  lanRules = lib.concatMap (m: map (l: rec {
+    iif = ingressIf.${m};
+    tag = tagOf "lan ${iif} ${l}";
+    line = ''iifname "${iif}" ip daddr ${l} ct mark set ${tag} accept'';
+    paths = [ ''${tag} . "eth0" . "${iif}"'' ''${tag} . "${iif}" . "eth0"'' ];
+  }) (lanOf m)) [ "tailscale" "wireguard" "openvpn" ];
+  netRules = map (c: rec {
+    tag = tagOf "internet ${c}";
+    line = ''iifname "${c}" ct mark set ${tag} accept'';
+    paths = lib.concatMap (u: [ ''${tag} . "${u}" . "${c}"'' ''${tag} . "${c}" . "${u}"'' ]) upstreams;
+  }) clientIfs;
+  hsTags = map (r: r.tag) (lanRules ++ netRules);
+  hsPaths = lib.concatMap (r: r.paths) (lanRules ++ netRules);
   # OpenVPN's own account, fixed uid/gid so host and container agree on who owns crl.pem
   ovpnId = 1194;
   ovpnUser = { isSystemUser = true; uid = ovpnId; group = "heliosphere-ovpn"; };
@@ -274,24 +294,33 @@ ${ip} rule add to ${n} lookup main priority 85
               # IPv6 too, but it can't see inside a tunnel). Clients fall back to IPv4.
               meta nfproto ipv6 reject with icmpx admin-prohibited
               ct state invalid drop
-              # Replies pass. The side that opened a connection goes through the rules
-              # below on every packet, like Heliopause on the host. Taking a home
-              # network away from one way in cuts that way's open connections even
-              # while another way in keeps it, and when a tunnel goes away, open
-              # connections hit the kill switch rather than leaving through eth0.
-              # Related packets (ICMP errors) aren't exempt either.
-              ct direction reply ct state established accept
+              # The side that opened a connection goes through the rules below on
+              # every packet, like Heliopause on the host, and replies pass only while
+              # the rule that allowed the connection is still here. Taking a home
+              # network away from one way in cuts that way's open connections, both
+              # ways, even while another way in keeps it; when a tunnel goes away,
+              # open connections hit the kill switch rather than leaving through eth0.
+              # ICMP errors only along their connection's path.
+              ${lib.optionalString (hsPaths != [ ]) "ct state related ct mark . iifname . oifname { ${lib.concatStringsSep ", " hsPaths} } accept"}
+              ct state related drop
+              ct direction reply ct state established ct mark { ${lib.concatStringsSep ", " ([ "0x0" ] ++ hsTags)} } accept
+              ct direction original ct mark set ${revoked}
+              # Nothing at home opens connections to remote clients: from home
+              # networks, only the replies above
+              iifname "eth0" ip saddr { ${lib.concatStringsSep ", " allLans} } drop
               # The host can't see inside a tunnel, so the DNS bypass blocks happen here too
               meta l4proto { tcp, udp } th dport 853 reject
               ip daddr @doh_v4 reject
               ip daddr @warp_v4 reject
               udp dport 2408 reject
               # Home networks: only the ways in that were allowed, only the networks chosen
-              ${lib.concatMapStrings (m: lib.optionalString (lanOf m != [ ]) "iifname \"${ingressIf.${m}}\" ip daddr { ${lib.concatStringsSep ", " (lanOf m)} } accept
-              ") [ "tailscale" "wireguard" "openvpn" ]}ip daddr { ${lib.concatStringsSep ", " allLans} } drop
+              ${lib.concatMapStringsSep "\n              " (r: r.line) lanRules}
+              ip daddr { ${lib.concatStringsSep ", " allLans} } drop
               ${lib.optionalString (tunnel && eg.killswitch) ''
               # Kill switch: client traffic goes into the tunnel or nowhere
               oifname "eth0" ip daddr != ${hostIp} drop''}
+              # The internet, for each way in
+              ${lib.concatMapStringsSep "\n              " (r: r.line) netRules}
             }
 
             chain output {
