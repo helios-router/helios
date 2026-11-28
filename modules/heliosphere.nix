@@ -257,8 +257,17 @@ lib.mkIf (cfg.internal.on "remote") {
             [ -n "$u" ] && creds="$u:$p@"
           fi
           exec ${pkgs.tun2socks}/bin/tun2socks -device tun://tun-out -interface eth0 -fwmark 2 \
-            -proxy "${eg.proxy.type or "socks5"}://$creds${eg.proxy.host or ""}:${toString (eg.proxy.port or 1080)}" \
-            -tun-post-up "ip addr add 198.18.0.1/15 dev tun-out; ip link set tun-out up; ip route replace default dev tun-out table 100; ip rule add lookup main suppress_prefixlength 0 priority 190 2>/dev/null || true; ip rule add not fwmark 0x2 table 100 priority 200 2>/dev/null || true"
+            -proxy "${eg.proxy.type or "socks5"}://''${creds}${eg.proxy.host or ""}:${toString (eg.proxy.port or 1080)}" \
+            -tun-post-up ${pkgs.writeShellScript "tun-out-up" ''
+              # tun2socks runs this without a shell, so it's a script of its own
+              ${ip} addr replace 198.18.0.1/15 dev tun-out
+              ${ip} link set tun-out up
+              ${ip} route replace default dev tun-out table 100
+              ${ip} rule del priority 190 2>/dev/null || true
+              ${ip} rule add lookup main suppress_prefixlength 0 priority 190
+              ${ip} rule del priority 200 2>/dev/null || true
+              ${ip} rule add not fwmark 0x2 table 100 priority 200
+            ''}
         '';
       };
 

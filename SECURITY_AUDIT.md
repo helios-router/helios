@@ -77,6 +77,7 @@ Status: **Fixed** = fixed and covered by a regression test. **Open** = known and
 | HA-30 | Low (functional) | `helios-ctl reboot` claimed success when the reboot was refused | Fixed |
 | HA-31 | Info | Remote-access clients can reach each other through the container | Open (a decision) |
 | HA-32 | Info (functional) | WireGuard / OpenVPN ways in got no answers with a VPN way out | Fixed |
+| HA-33 | Info (functional) | The proxy way out never worked (host name mangled, tunnel never set up) | Fixed |
 
 ### HA-01: Source checks ran after connection tracking (High, Fixed)
 
@@ -325,6 +326,14 @@ Not a leak: the kill switch held, so the answers went nowhere. But remote access
 - wg-quick's rules are moved to 190/200 once it's up.
 
 Test: the kill-switch VM test connects the phone over WireGuard with each way out.
+
+### HA-33: The proxy way out never worked (Info, functional, Fixed)
+
+Found by `tests/vm/killswitch.nix`. There were two problems in `helios-egress-proxy` (`modules/heliosphere.nix`):
+- **The proxy address was mangled.** `-proxy "socks5://$creds<host>:<port>"`: bash read `$creds` plus the start of the host name as one, empty, variable. A host of `192.0.2.1` became `.0.2.1`, and the same happens to any host name.
+- **The tunnel was never set up.** tun2socks runs `-tun-post-up` without a shell, so the `;`-joined commands failed: tun-out stayed down, with no address, route or rules.
+
+The kill switch held, so client traffic went nowhere and nothing leaked. Fixed with `''${creds}`, and a script file for post-up that also replaces its rules instead of adding duplicates. Test: the kill-switch VM test's SOCKS5 run.
 
 ## Verified by design
 
