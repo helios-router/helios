@@ -446,15 +446,6 @@ def run_egress(order, mode):
         Client("W", NET, 7000, "tcp").say("t-new-during")
         res[f"deny: {how}: open or new connections leave through eth0 when the tunnel goes"] = \
             leaked() == base and left_eth0() == base_c
-        if how == "route":
-            # Control: with the kill switch off the same outage does send traffic out
-            # of eth0, so the counters above can see a leak when there is one
-            load(container_rules(order, allow, mode, killswitch=False))
-            c0, h0 = left_eth0(), leaked()
-            Client("W", NET, 9000, "udp").say("u-control")
-            res[f"legit: {how}: (control) with the kill switch off, the counters see traffic outside the tunnel"] = \
-                left_eth0() > c0 and leaked() > h0 and "192.0.2.254" in seen(udp, "u-control")
-            load(container_rules(order, allow, mode))
         res[f"deny: {how}: nothing reaches the internet outside the tunnel"] = not (
             seen(udp, "u-during") | seen(tcp, "t-during") | seen(udp, "u-new-during") | seen(tcp, "t-new-during")) - {tun_src}
         # DNS keeps working (through the router), the host stays reachable
@@ -475,6 +466,20 @@ def run_egress(order, mode):
         res[f"legit: {how}: new connections use the tunnel again once it's back"] = \
             seen(udp, "u-after") == {tun_src} and seen(tcp, "t-after") == {tun_src}
         stop_traffic()
+        if how == "route":
+            # Control, on its own (no client left retrying): with the kill switch off
+            # the same outage does send traffic out of eth0, so the counters above
+            # can see a leak when there is one
+            ctl = server("N", "0.0.0.0", 9002, "udp")
+            tunnel_routes(mode, add=False)
+            load(container_rules(order, allow, mode, killswitch=False))
+            c0, h0 = left_eth0(), leaked()
+            Client("W", NET, 9002, "udp").say("u-control")
+            res[f"legit: {how}: (control) with the kill switch off, the counters see traffic outside the tunnel"] = \
+                left_eth0() > c0 and leaked() > h0 and "192.0.2.254" in seen(ctl, "u-control")
+            stop_traffic()
+            tunnel_up(mode)
+            load(container_rules(order, allow, mode))
 
     # IPv6 from a Tailscale client: the tunnel has IPv6, the filtering doesn't
     v6 = server("N", "2001:db8:ff::10", 9006, "udp")

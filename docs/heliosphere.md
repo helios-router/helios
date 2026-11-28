@@ -59,7 +59,9 @@ This covers connections that are already open, too. The container checks every
 packet a client sends against the kill switch, so when the tunnel's routes or its
 device go away, an open TCP or UDP connection is dropped rather than following the
 main table's default route out of eth0. Only replies are accepted without that
-check. The host is a second line: it accepts nothing from the container that
+check. (Masquerading on the tunnel already stops such connections. The kernel drops
+a masqueraded connection whose output interface changes. The rule order doesn't
+rely on that.) The host is a second line: it accepts nothing from the container that
 doesn't come from 10.60.0.2, which tunnel-NATed packets don't.
 
 **IPv4 only**: the container refuses to forward IPv6, and refuses its own IPv6

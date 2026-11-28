@@ -9,10 +9,10 @@ track `main` through the flake, and the commit hash is the version.
 
 ### Security
 - Remote access (Heliosphere): the container checks the side that opened a
-  connection on every packet, as Heliopause does. When the way out's tunnel goes
-  away, open connections hit the kill switch instead of leaving through eth0.
-  Taking a home network away from one way in cuts that way's open connections,
-  even while another way in keeps it.
+  connection on every packet, as Heliopause does. Taking a home network away from
+  one way in cuts that way's open connections, even while another way in keeps it.
+  The kill switch also checks open connections now. It held already, because
+  masquerading on the tunnel stops them (tested).
 - Remote access is IPv4-only inside the container too. Before, clients' IPv6
   (such as Tailscale exit-node traffic) could pass through a way out that has
   IPv6, past the DNS redirect and the DoH block.

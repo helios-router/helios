@@ -129,7 +129,7 @@ in
         # replies accepted up front, so the per-way-in home-network rules (and the
         # kill switch) apply to connections that are already open
         fwd = container("nft list chain inet heliosphere forward").splitlines()
-        hs_rules = [l.strip() for l in fwd if l.strip() and not l.strip().startswith(("chain", "type", "}"))]
+        hs_rules = [l.strip() for l in fwd if l.strip() and not l.strip().startswith(("table", "chain", "type", "}"))]
         print("\n".join(hs_rules))
         assert not any("ct state vmap" in r and "established" in r for r in hs_rules), "established accepted before the rules again"
         assert hs_rules[0].startswith("meta nfproto ipv6 reject"), f"IPv6 isn't refused first: {hs_rules[0]!r}"

@@ -68,7 +68,7 @@ Status: **Fixed** = fixed and covered by a regression test. **Open** = known and
 | HA-21 | Info | MAC addresses can be copied | Accepted |
 | HA-22 | Info | Weaker CI and release hygiene items | Open |
 | HA-23 | Medium | Remote-access clients' IPv6 got round the container's IPv4-only filtering | Fixed |
-| HA-24 | Low | Container accepted open connections before the kill switch | Fixed |
+| HA-24 | Info | Container accepted open connections before the kill switch (not reproducible: masquerade already stops them) | Hardened |
 | HA-25 | Low | Per-way-in home-network revocation relied on the container restarting | Fixed |
 | HA-26 | Info (functional) | Proxy egress sent replies for WireGuard / OpenVPN clients back into the tunnel | Fixed |
 
@@ -236,12 +236,13 @@ Quarantine and pausing a device match by MAC. A device can copy a known MAC, or 
 - **Fix:** the container refuses to forward IPv6 (`meta nfproto ipv6 reject`, the first forward rule in `modules/heliosphere.nix`), and refuses its own IPv6 on eth0 and the tunnel (output chain). Clients fall back to IPv4.
 - **Tests:** `tests/netns/heliosphere.py` ("client IPv6 forwarded", "client DNS over IPv6", for each way out); `tests/vm/hardening.nix` (IPv6 refused first in the real ruleset).
 
-### HA-24: Container accepted open connections before the kill switch (Low, Fixed)
+### HA-24: Container accepted open connections before the kill switch (Info, not reproducible, hardened)
 
-- **What:** the container's forward chain accepted every established packet first, so the kill switch only ever saw new connections. If the tunnel's routes went away while its device stayed up, open client connections followed the main table's default route out of eth0. The tunnel can lose its routes during an OpenVPN reconnect with `persist-tun`. When the device itself goes away (wg-quick down, tun2socks or OpenVPN exiting), the kernel's masquerade cleanup drops those connections' state, so they are re-checked as new anyway.
-- **Why only Low:** packets that escaped this way still carried the tunnel's NAT address, and the host's anti-spoofing (HA-01) accepts only 10.60.0.2 from the container. The container leaked them onto its link, but the host didn't pass them to the internet. The host is a second line, not the kill switch.
-- **Fix:** only reply-direction established packets are accepted up front. The side that opened a connection goes through the kill switch on every packet. Invalid packets are dropped, and related packets aren't exempt.
-- **Tests:** `tests/netns/heliosphere.py`, for each of WireGuard, OpenVPN and proxy egress, and for both failure modes (routes gone, device gone). It checks open TCP and UDP connections, new connections, DNS during the outage, reaching the host, and recovery. `tests/vm/hardening.nix` asserts the order in the real ruleset.
+- **Suspected:** the container's forward chain accepted every established packet first, so the kill switch only ever saw new connections. If the tunnel's routes went away while its device stayed up (for example an OpenVPN reconnect with `persist-tun`), open client connections might follow the main table's default route out of eth0.
+- **Measured:** it doesn't happen. `tests/netns/heliosphere.py` runs the old ordering with each way out (WireGuard, OpenVPN, proxy) and both failure modes (routes gone, device gone). No open or new client connection left the container's eth0. A control in the same run, with the kill switch off, does show traffic on eth0 and on the router's WAN, so the counters would have seen a leak.
+- **Why (our reading of the kernel):** all client traffic through the tunnel is masqueraded on the tunnel interface, either by the container's postrouting rule or by Tailscale's own. Linux kills a masqueraded connection and drops the packet when that connection's output interface changes (`nf_nat_oif_changed`), and it discards masquerade state when the device goes down. The next packet is then a new connection, and the kill switch drops it.
+- **Hardening kept:** only reply-direction packets are accepted up front, and the side that opened a connection goes through the kill switch on every packet. The kill switch then holds without relying on masquerade, for example if a tunnel used SNAT or no NAT. Separately, the host only accepts 10.60.0.2 from the container, and tunnel-NATed packets don't have that address.
+- **Tests:** `tests/netns/heliosphere.py` (for each way out and failure mode: open TCP and UDP connections, new connections, DNS during the outage, reaching the host, recovery, plus the control). `tests/vm/hardening.nix` asserts the order in the real ruleset.
 
 ### HA-25: Per-way-in revocation relied on the container restarting (Low, Fixed)
 
