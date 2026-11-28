@@ -221,7 +221,23 @@ lib.mkIf (cfg.internal.on "remote") {
       networking.wg-quick.interfaces.wg-out = lib.mkIf (eg.mode == "wireguard") {
         configFile = "${dir}/egress/wg-out.conf";
       };
-      systemd.services.wg-quick-wg-out = lib.mkIf (eg.mode == "wireguard") { unitConfig.ConditionPathExists = "${dir}/egress/wg-out.conf"; };
+      systemd.services.wg-quick-wg-out = lib.mkIf (eg.mode == "wireguard") {
+        unitConfig.ConditionPathExists = "${dir}/egress/wg-out.conf";
+        # wg-quick adds its two rules without a priority, so the kernel puts them in
+        # front of every other rule, ahead of policy routing's 80-90 (replies to
+        # incoming connections would go into the tunnel). Move them behind, where
+        # tun2socks keeps its own.
+        serviceConfig.ExecStartPost = "${pkgs.writeShellScript "wg-out-rules" ''
+          for f in -4 -6; do
+            if ${ip} $f rule del lookup main suppress_prefixlength 0 2>/dev/null; then
+              ${ip} $f rule add lookup main suppress_prefixlength 0 priority 190
+            fi
+            if ${ip} $f rule del not fwmark 51820 lookup 51820 2>/dev/null; then
+              ${ip} $f rule add not fwmark 51820 lookup 51820 priority 200
+            fi
+          done
+        ''}";
+      };
 
       systemd.services.helios-egress-proxy = lib.mkIf (eg.mode == "proxy") {
         description = "Remote access: all traffic through the upstream proxy";
@@ -257,7 +273,11 @@ lib.mkIf (cfg.internal.on "remote") {
           ${ip} rule del priority 80 2>/dev/null || true
           ${ip} rule del priority 90 2>/dev/null || true
           ${ip} rule add to 10.60.0.0/24 lookup main priority 80
-          ${ip} rule add fwmark 0x1 lookup main priority 90
+          # Replies to connections that came in on eth0 (WireGuard / OpenVPN transport,
+          # proxy users) go back via the host, in a table of their own: "main" holds
+          # OpenVPN's redirect-gateway routes when that's the way out
+          ${ip} route replace default via ${hostIp} dev eth0 table 90
+          ${ip} rule add fwmark 0x1 lookup 90 priority 90
           # Home networks some way in may reach stay on the main table, past any tunnel
           ${lib.concatMapStrings (n: "${ip} rule del to ${n} priority 85 2>/dev/null || true
 ${ip} rule add to ${n} lookup main priority 85

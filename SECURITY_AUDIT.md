@@ -76,6 +76,7 @@ Status: **Fixed** = fixed and covered by a regression test. **Open** = known and
 | HA-29 | Info | OpenVPN's CRL was chowned by a fixed name in OpenVPN's folder | Fixed (hardening) |
 | HA-30 | Low (functional) | `helios-ctl reboot` claimed success when the reboot was refused | Fixed |
 | HA-31 | Info | Remote-access clients can reach each other through the container | Open (a decision) |
+| HA-32 | Info (functional) | WireGuard / OpenVPN ways in got no answers with a VPN way out | Fixed |
 
 ### HA-01: Source checks ran after connection tracking (High, Fixed)
 
@@ -312,6 +313,18 @@ Quarantine and pausing a device match by MAC. A device can copy a known MAC, or 
 ### HA-31: Remote-access clients can reach each other (Info, Open)
 
 The container forwards between its ways in (WireGuard, OpenVPN, Tailscale) and between clients on the same way in. `docs/heliosphere.md` says clients can't reach home, which holds, but says nothing about each other. That suits one owner's phone and laptop; it doesn't suit giving remote access to guests. If clients should be isolated from each other, add `oifname { <client interfaces> } drop` before the internet rules in the container's forward chain. Not changed here: it's a policy decision.
+
+### HA-32: WireGuard and OpenVPN ways in got no answers with a VPN way out (Info, functional, Fixed)
+
+Found by `tests/vm/killswitch.nix`. The container answered the phone's WireGuard handshake, but the answer went into the egress tunnel. Answers to connections that came in on eth0 were routed by `fwmark 0x1 lookup main` at priority 90, and there were two problems:
+- wg-quick adds its rules without a priority, and the kernel then puts them in front of every existing rule (78/79), ahead of 90.
+- With an OpenVPN way out, `main` itself holds the `redirect-gateway` routes.
+
+Not a leak: the kill switch held, so the answers went nowhere. But remote access over WireGuard or OpenVPN didn't work with a VPN way out. Fix (`modules/heliosphere.nix`):
+- The answers have a table of their own (90: default via the host).
+- wg-quick's rules are moved to 190/200 once it's up.
+
+Test: the kill-switch VM test connects the phone over WireGuard with each way out.
 
 ## Verified by design
 

@@ -111,10 +111,10 @@ can set a socket mark only with CAP_NET_ADMIN, and only the root daemons below d
 |---|---|---|
 | 80: `to 10.60.0.0/24 lookup main` | `helios-policy-routing` | The host (DNS, the router) stays reachable whatever the tunnel does |
 | 85: `to <home network> lookup main` | `helios-policy-routing`, one per network any way in may reach | Home networks past the tunnel. Routing only: the forward chain decides which way in may use it |
-| 90: `fwmark 0x1 lookup main` | `helios-policy-routing` | Replies to connections that came in on eth0 |
+| 90: `fwmark 0x1 lookup 90` | `helios-policy-routing` | Replies to connections that came in on eth0, via the host (table 90 holds only that default route: `main` has OpenVPN's redirect-gateway routes) |
 | 190: `lookup main suppress_prefixlength 0` | tun2socks (proxy way out) | Specific `main` routes (the clients' own subnets) before the tunnel; never `main`'s default route |
 | 200: `not fwmark 0x2 lookup 100` | tun2socks | Everything else into the proxy tunnel (table 100) |
-| wg-quick's own pair (`not fwmark 51820 lookup 51820`, `main suppress_prefixlength 0`) | wg-quick (WireGuard way out) | Everything else into the WireGuard tunnel |
+| 190 / 200: wg-quick's own pair (`main suppress_prefixlength 0`, `not fwmark 51820 lookup 51820`) | wg-quick (WireGuard way out); moved to 190/200 once it's up, since wg-quick puts them in front of every rule | Everything else into the WireGuard tunnel |
 | OpenVPN | `redirect-gateway def1`: `0/1` and `128/1` via tun-out in `main` | Everything else into the OpenVPN tunnel |
 
 When a tunnel goes away, its routes go with it (wg-quick also removes its rules).
