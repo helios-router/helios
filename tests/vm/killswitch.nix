@@ -137,7 +137,7 @@ in
     in {
       imports = [ (common.router self) ];
       virtualisation.memorySize = 3072;
-      environment.systemPackages = [ pkgs.tcpdump pkgs.dig ];
+      environment.systemPackages = [ pkgs.tcpdump pkgs.dig pkgs.python3 ];
       helios.heliosphere.enable = lib.mkOverride 40 true;
       helios.heliosphere.publicHost = "vpn.example.test";
       helios.state = lib.mkOverride 40 (stateWith { mode = "wireguard"; killswitch = true; });
@@ -242,10 +242,17 @@ in
                            (router, "tcpdump -c 10 -ni any udp port 51820 & sleep 4; kill %1")):
                 print(m.execute(cmd)[1])
             raise
-        # DNS answers through the router at all (AdGuard on 10.60.0.1), so the
-        # check during an outage means something
-        # (a private reverse lookup: AdGuard answers it itself, no internet here)
-        router.wait_until_succeeds("dig +time=5 +tries=1 @10.60.0.1 -x 10.60.0.1 | grep -q 'status:'", timeout=120)
+        # AdGuard only serves DNS once its setup wizard is done (a step of the
+        # install): stand in for it on the router's address the container uses, and
+        # answer everything NXDOMAIN. What's tested is that the phone's DNS is
+        # redirected there and never leaves on the WAN, not AdGuard itself.
+        router.succeed("systemctl stop adguardhome.service")
+        router.succeed("systemd-run --unit dns-stand-in python3 -c '"
+                       "import socket\n"
+                       "s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind((\"10.60.0.1\", 53))\n"
+                       "while True:\n"
+                       "    d, a = s.recvfrom(512); s.sendto(d[:2] + bytes([0x81, 0x83]) + d[4:6] + bytes(6) + d[12:], a)'")
+        router.wait_until_succeeds("dig +time=3 +tries=1 @10.60.0.1 example.com | grep -q 'status: NXDOMAIN'", timeout=30)
 
     def outage(mode, unit, killswitch=True):
         tag = mode
@@ -267,7 +274,7 @@ in
         time.sleep(8)                                         # the sessions keep trying
         send("tcp", f"{tag}-new-tcp", 3)                      # new connections during the outage
         send("udp", f"{tag}-new-udp", 3)
-        dns = remote.execute("dig +time=5 +tries=1 @8.8.8.8 -x 10.60.0.1")[1]
+        dns = remote.execute("dig +time=5 +tries=1 @8.8.8.8 example.com")[1]
         time.sleep(2)
         router.succeed("pkill tcpdump; sleep 1")
         captured = router.succeed(f"tcpdump -nr /tmp/{tag}.pcap 2>/dev/null | wc -l").strip()
@@ -279,7 +286,7 @@ in
         if killswitch:
             assert captured == "0", f"{mode}: the phone's traffic appeared on the WAN while the tunnel was down"
             assert not any(via_wan.values()), f"{mode}: the destination heard the phone from the WAN address: {leaked}"
-            assert "status:" in dns, f"{mode}: no DNS answer while the tunnel was down"
+            assert "status: NXDOMAIN" in dns, f"{mode}: the router didn't answer DNS while the tunnel was down"
         else:
             assert int(captured) > 0 and any(via_wan.values()), \
                 f"{mode}: the control (kill switch off) saw no leak, so the capture proves nothing"
