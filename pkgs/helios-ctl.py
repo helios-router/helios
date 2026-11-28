@@ -4778,7 +4778,7 @@ def gate_tls_mode(mode):
     tmp = f"{link}.{os.getpid()}.tmp"
     os.symlink(target, tmp)
     os.replace(tmp, link)
-    write_private(GATE["tlsMode"], mode + "\n", 0o644)
+    write_private(GATE["tlsMode"], mode + "\n")       # read by helios-gate-init (root)
 
 
 def caddy_restart():
@@ -4917,7 +4917,7 @@ def cmd_gate_enforce(a):
         fail("Copy the admin password to the gate first")
     if not gate_passkeys(user) and not gate_has_totp(user):
         fail("Register a passkey (recommended) or a code first")
-    write_private(GATE_FLAG, f"{now()}\n", 0o640)
+    write_private(GATE_FLAG, f"{now()}\n")   # Caddy only checks it exists (the folder is root:caddy 0750)
     if os.geteuid() == 0:
         try:
             os.chown(GATE_FLAG, 0, pwd.getpwnam("caddy").pw_gid)
