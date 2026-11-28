@@ -244,7 +244,8 @@ in
             raise
         # DNS answers through the router at all (AdGuard on 10.60.0.1), so the
         # check during an outage means something
-        router.wait_until_succeeds("dig +time=3 +tries=1 @10.60.0.1 router.home.arpa | grep -q 'status:'", timeout=120)
+        # (a private reverse lookup: AdGuard answers it itself, no internet here)
+        router.wait_until_succeeds("dig +time=5 +tries=1 @10.60.0.1 -x 10.60.0.1 | grep -q 'status:'", timeout=120)
 
     def outage(mode, unit, killswitch=True):
         tag = mode
@@ -266,7 +267,7 @@ in
         time.sleep(8)                                         # the sessions keep trying
         send("tcp", f"{tag}-new-tcp", 3)                      # new connections during the outage
         send("udp", f"{tag}-new-udp", 3)
-        dns = remote.execute("dig +time=3 +tries=1 @8.8.8.8 router.home.arpa")[1]
+        dns = remote.execute("dig +time=5 +tries=1 @8.8.8.8 -x 10.60.0.1")[1]
         time.sleep(2)
         router.succeed("pkill tcpdump; sleep 1")
         captured = router.succeed(f"tcpdump -nr /tmp/{tag}.pcap 2>/dev/null | wc -l").strip()
