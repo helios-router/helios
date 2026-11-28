@@ -339,8 +339,9 @@ in
         watched = ("/etc/shadow /var/lib/heliosphere/wireguard/private /var/lib/heliosphere/wireguard/public "
                    "/var/lib/helios-gate/enforced /var/lib/authelia-helios/users.yml")
         def snapshot():
-            return router.succeed(f"sha256sum {watched} 2>&1; ls -la /var/lib/helios-gate /var/lib/helios/totp "
-                                  "/var/lib/heliosphere/egress 2>&1; cat /proc/sys/kernel/random/boot_id")
+            # (some of these don't exist on this router: their "missing" is part of the snapshot)
+            return router.execute(f"sha256sum {watched} 2>&1; ls -la /var/lib/helios-gate /var/lib/helios/totp "
+                                  "/var/lib/heliosphere/egress 2>&1; cat /proc/sys/kernel/random/boot_id")[1]
         before = snapshot()
         router.fail("runuser -u guest -- sudo -n true")
         attempts = [

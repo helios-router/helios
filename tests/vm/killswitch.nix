@@ -233,7 +233,15 @@ in
             f" && wg set wg0 private-key /root/wg.key peer {srv_pub} endpoint {wan_ip}:51820 allowed-ips 0.0.0.0/0 persistent-keepalive 5"
             " && ip addr add 10.61.0.2/24 dev wg0 && ip link set wg0 up"
             f" && ip route add {DEST}/32 dev wg0 && ip route add 8.8.8.8/32 dev wg0")
-        remote.wait_until_succeeds("ping -c 1 -W 2 10.61.0.1", timeout=60)
+        try:
+            remote.wait_until_succeeds("ping -c 1 -W 2 10.61.0.1", timeout=60)
+        except Exception:
+            for m, cmd in ((remote, "wg show; ip route"),
+                           (router, "nft list table inet heliopause-nat; nft list chain inet heliopause forward | head -40"),
+                           (router, "nixos-container run heliosphere -- sh -c 'wg show; ip rule; ip route; nft list ruleset | head -80; sysctl net.ipv4.conf.all.rp_filter net.ipv4.conf.eth0.rp_filter'"),
+                           (router, "tcpdump -c 10 -ni any udp port 51820 & sleep 4; kill %1")):
+                print(m.execute(cmd)[1])
+            raise
         # DNS answers through the router at all (AdGuard on 10.60.0.1), so the
         # check during an outage means something
         router.wait_until_succeeds("dig +time=3 +tries=1 @10.60.0.1 router.home.arpa | grep -q 'status:'", timeout=120)
