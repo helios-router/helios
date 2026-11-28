@@ -216,8 +216,9 @@ in
     start_all()
     router.wait_for_unit("multi-user.target")
     wan_ip = lease(router, "wan", "192.0.2")
-    for u in ("dest.service", "wireguard-wg-up.service", "openvpn-up.service", "dante.service"):
+    for u in ("dest.service", "openvpn-up.service", "dante.service"):
         isp.wait_for_unit(u)
+    isp.wait_until_succeeds("ip link show wg-up", timeout=60)   # networkd sets it up, no unit of its own
     router.wait_for_unit("container@heliosphere.service", timeout=300)
 
     with subtest("set up: egress configs uploaded, the phone connected"):

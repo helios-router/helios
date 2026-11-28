@@ -27,7 +27,6 @@ Needs root (CI): it turns on IP forwarding in its namespaces.
 Exit status 0 = every check passed. Never touches the host's own network.
 """
 import os
-import select
 import socket
 import struct
 import subprocess
