@@ -124,6 +124,7 @@ PEER = r"""
 import socket, sys, threading, time
 role, proto, host, port, log, go = sys.argv[1:7]
 sport = int(sys.argv[7]) if len(sys.argv) > 7 else 0
+src = sys.argv[8] if len(sys.argv) > 8 else ""
 fam = socket.AF_INET6 if ":" in host else socket.AF_INET
 dgram = proto == "udp"
 s = socket.socket(fam, socket.SOCK_DGRAM if dgram else socket.SOCK_STREAM)
@@ -135,8 +136,8 @@ if role == "listen":
     if not dgram:
         s.listen(1); s, a = s.accept(); peer[0] = a
 else:
-    if sport:
-        s.bind(("", sport))
+    if sport or src:
+        s.bind((src, sport))
     s.connect((host, int(port)))
     peer[0] = (host, int(port))
 def rx():
@@ -173,13 +174,13 @@ while True:
 
 
 class Peer:
-    def __init__(self, where, role, proto, host, port, sport=0):
+    def __init__(self, where, role, proto, host, port, sport=0, src=""):
         tag = f"{where}-{role}-{proto}-{host}-{port}-{len(procs)}"
         self.log, self.go = os.path.join(TMP, tag + ".log"), os.path.join(TMP, tag + ".go")
         write_file(self.log, "")
         write_file(self.go, "")
         bg(where, [PY, "-I", os.path.join(TMP, "peer.py"), role, proto, host, str(port), self.log, self.go]
-           + ([str(sport)] if sport else []))
+           + ([str(sport), src] if sport or src else []))
         time.sleep(0.3)
 
     def say(self, msg):
@@ -274,7 +275,7 @@ def revoke(res, name, grant, revoked, client, server, host, port, server_first=T
     directions, load `grant` again and open new ones."""
     for proto, p in (("tcp", port), ("udp", port + 1)):
         load(grant)
-        srv = Peer(server, "listen", proto, "::" if ":" in host else "0.0.0.0", p)
+        srv = Peer(server, "listen", proto, host, p)
         cli = Peer(client, "connect", proto, host, p)
         cli.say("c1")
         srv.say("s1")
@@ -287,7 +288,7 @@ def revoke(res, name, grant, revoked, client, server, host, port, server_first=T
         res[f"deny: {name} ({proto}): server can't send on the open connection"] = not cli.got("s2")
         stop_traffic()
         load(grant)
-        srv = Peer(server, "listen", proto, "::" if ":" in host else "0.0.0.0", p + 10)
+        srv = Peer(server, "listen", proto, host, p + 10)
         cli = Peer(client, "connect", proto, host, p + 10)
         cli.say("c3")
         srv.say("s3")
@@ -302,7 +303,7 @@ def pause(res, v6):
     elems = ["cutoff { 10.20.0.100 }", f"cutoff_mac {{ {MAC['T']} }}"]
     for proto, p in (("tcp", port), ("udp", port + 1)):
         load("base")
-        srv = Peer("isp", "listen", proto, "::" if v6 else "0.0.0.0", p)
+        srv = Peer("isp", "listen", proto, host, p)
         cli = Peer("T", "connect", proto, host, p)
         cli.say("c1")
         srv.say("s1")
@@ -317,7 +318,7 @@ def pause(res, v6):
         for e in elems:
             sh(f"nft delete element inet heliopause {e}")
         stop_traffic()
-        srv = Peer("isp", "listen", proto, "::" if v6 else "0.0.0.0", p + 10)
+        srv = Peer("isp", "listen", proto, host, p + 10)
         cli = Peer("T", "connect", proto, host, p + 10)
         cli.say("c3")
         srv.say("s3")
@@ -341,10 +342,10 @@ def unrelated_reload(res):
 
 def spoof(res):
     load("base")
-    srv = Peer("isp", "listen", "udp", "0.0.0.0", 7600)
+    srv = Peer("isp", "listen", "udp", NET, 7600)
     Peer("T", "connect", "udp", NET, 7600, sport=5600).say("legit-flow")
     ns("I", "ip addr add 10.20.0.100/32 dev eth0")
-    Peer("I", "connect", "udp", NET, 7600, sport=5600).say("spoofed-flow")
+    Peer("I", "connect", "udp", NET, 7600, sport=5600, src="10.20.0.100").say("spoofed-flow")
     ns("I", "ip addr del 10.20.0.100/32 dev eth0")
     res["legit: trusted's UDP flow to the internet"] = srv.got("legit-flow")
     res["deny: iot copying trusted's open flow"] = not srv.got("spoofed-flow")
