@@ -111,6 +111,7 @@ can set a socket mark only with CAP_NET_ADMIN, and only the root daemons below d
 |---|---|---|
 | 80: `to 10.60.0.0/24 lookup main` | `helios-policy-routing` | The host (DNS, the router) stays reachable whatever the tunnel does |
 | 85: `to <home network> lookup main` | `helios-policy-routing`, one per network any way in may reach | Home networks past the tunnel. Routing only: the forward chain decides which way in may use it |
+| 88: `ipproto <p> sport <way-in port> lookup 90` | `helios-policy-routing`, one per enabled way in (WireGuard, OpenVPN, proxy ports) | The same, by port: kernel WireGuard's own socket doesn't carry the conntrack mark |
 | 90: `fwmark 0x1 lookup 90` | `helios-policy-routing` | Replies to connections that came in on eth0, via the host (table 90 holds only that default route: `main` has OpenVPN's redirect-gateway routes) |
 | 190: `lookup main suppress_prefixlength 0` | tun2socks (proxy way out) | Specific `main` routes (the clients' own subnets) before the tunnel; never `main`'s default route |
 | 200: `not fwmark 0x2 lookup 100` | tun2socks | Everything else into the proxy tunnel (table 100) |

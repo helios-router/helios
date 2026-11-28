@@ -278,6 +278,13 @@ lib.mkIf (cfg.internal.on "remote") {
           # OpenVPN's redirect-gateway routes when that's the way out
           ${ip} route replace default via ${hostIp} dev eth0 table 90
           ${ip} rule add fwmark 0x1 lookup 90 priority 90
+          # ...also by their listening port: kernel WireGuard sends from its own
+          # socket, which the conntrack mark above doesn't reach
+          while ${ip} rule del priority 88 2>/dev/null; do :; done
+          ${lib.concatMapStrings (p: "${ip} rule add ipproto ${p.proto} sport ${toString p.port} lookup 90 priority 88\n")
+            (lib.optional R.wireguard.enabled { proto = "udp"; port = R.wireguard.port; }
+             ++ lib.optional R.openvpn.enabled { proto = R.openvpn.proto; port = R.openvpn.port; }
+             ++ lib.optionals R.proxy.enabled [ { proto = "tcp"; port = R.proxy.socksPort; } { proto = "tcp"; port = R.proxy.httpPort; } ])}
           # Home networks some way in may reach stay on the main table, past any tunnel
           ${lib.concatMapStrings (n: "${ip} rule del to ${n} priority 85 2>/dev/null || true
 ${ip} rule add to ${n} lookup main priority 85
