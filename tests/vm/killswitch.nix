@@ -247,7 +247,7 @@ in
         # answer everything NXDOMAIN. What's tested is that the phone's DNS is
         # redirected there and never leaves on the WAN, not AdGuard itself.
         router.succeed("systemctl stop adguardhome.service")
-        router.succeed("systemd-run --unit dns-stand-in python3 -c '"
+        router.succeed("systemd-run --unit dns-stand-in /run/current-system/sw/bin/python3 -c '"
                        "import socket\n"
                        "s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind((\"10.60.0.1\", 53))\n"
                        "while True:\n"
