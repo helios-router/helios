@@ -211,6 +211,9 @@ in
                 return got
             assert wan_ip not in got, f"{tag}: the phone's traffic left through the WAN directly: {got}"
             time.sleep(3)
+        for m, cmd in ((router, "nixos-container run heliosphere -- sh -c 'systemctl status helios-egress-proxy --no-pager -n 30; ip rule; ip route show table 100; ip addr show tun-out'"),
+                       (isp, "journalctl -u dante --no-pager -n 30; ss -tunlp | grep -E '1080|7000|7001'")):
+            print(m.execute(cmd)[1])
         raise Exception(f"{tag}: never reached the destination through the tunnel")
 
     start_all()
