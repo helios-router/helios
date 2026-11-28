@@ -36,6 +36,20 @@ jobs:
       - name: Offline install (helios-install in a VM with no network)
         run: nix build --impure .#vmTests.offline-install --print-build-logs --no-link
 
+  firewall:
+    name: Firewall in namespaces (real rulesets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: cachix/install-nix-action@382a9ed9481c7c1f94f68b72ef105b3417c73877 # v32.1.0
+      - run: nix build .#heliopauseRulesets -o rulesets --print-build-logs
+      - run: sudo apt-get install -y --no-install-recommends nftables
+      # Open connections in both directions when a permission goes away, forged
+      # ICMP errors between networks, pausing, spoofing: modules/heliopause.nix's
+      # own rules against real traffic
+      - run: sudo HELIOS_NETNS_REQUIRE_FORWARD=1 python3 -I tests/netns/firewall.py rulesets
+
   tests:
     name: helios-ctl tests and lint
     runs-on: ubuntu-latest
