@@ -37,6 +37,8 @@ in
       virtualisation.memorySize = 3072;
       # Sign in through Cockpit's PAM service from the shell; compute TOTP codes
       environment.systemPackages = [ pkgs.pamtester pkgs.oath-toolkit pkgs.openssl ];
+      # A local account outside wheel, to show helios-ctl does nothing privileged for it
+      users.users.guest = { isNormalUser = true; };
       helios.logwatch.enable = lib.mkOverride 40 true;
       helios.heliosphere.enable = lib.mkOverride 40 true;
       helios.gate.enable = lib.mkOverride 40 true;   # the optional passkey / two-factor gate
@@ -133,9 +135,13 @@ in
         print("\n".join(hs_rules))
         assert not any("ct state vmap" in r and "established" in r for r in hs_rules), "established accepted before the rules again"
         assert hs_rules[0].startswith("meta nfproto ipv6 reject"), f"IPv6 isn't refused first: {hs_rules[0]!r}"
-        reply = next(i for i, r in enumerate(hs_rules) if r.startswith("ct direction reply ct state established accept"))
+        reply = next(i for i, r in enumerate(hs_rules) if r.startswith("ct direction reply ct state established ct mark"))
         lans = next(i for i, r in enumerate(hs_rules) if r.startswith("ip daddr {") and r.endswith("drop"))
         assert reply < lans, "replies aren't accepted before the home-network rules"
+        # ...and only while the rule that allowed the connection is still there
+        revoke = next(i for i, r in enumerate(hs_rules) if r.startswith("ct direction original ct mark set 0x7fffffff"))
+        assert reply < revoke < lans, "the opening side isn't marked revoked before the rules re-tag it"
+        assert any(r.startswith("ct state related ct mark . iifname . oifname") for r in hs_rules[:reply]), "ICMP errors aren't checked against their connection's path"
         hs_out = container("nft list chain inet heliosphere output")
         assert "meta nfproto ipv6" in hs_out and "reject" in hs_out, "the container's own IPv6 isn't refused"
 
@@ -325,5 +331,39 @@ in
         issuer = router.succeed("echo | openssl s_client -connect 127.0.0.1:9090 -servername helios.example.test 2>/dev/null | openssl x509 -noout -issuer")
         assert "Caddy Local Authority" in issuer, issuer
         assert "helios.example.test" in router.succeed("getent hosts helios.example.test"), "the router doesn't answer its own domain"
+
+    with subtest("helios-ctl: an account outside wheel changes nothing, whatever it runs"):
+        # helios-ctl is on everyone's PATH and has no caller check of its own: what
+        # stops a non-admin is that it only gets root through sudo (wheel only)
+        # and everything it changes is root's. Run the privileged commands anyway.
+        watched = ("/etc/shadow /var/lib/heliosphere/wireguard/private /var/lib/heliosphere/wireguard/public "
+                   "/var/lib/helios-gate/enforced /var/lib/authelia-helios/users.yml")
+        def snapshot():
+            # (some of these don't exist on this router: their "missing" is part of the snapshot)
+            return router.execute(f"sha256sum {watched} 2>&1; ls -la /var/lib/helios-gate /var/lib/helios/totp "
+                                  "/var/lib/heliosphere/egress 2>&1; cat /proc/sys/kernel/random/boot_id")[1]
+        before = snapshot()
+        router.fail("runuser -u guest -- sudo -n true")
+        attempts = [
+            ("gate-off", ""),
+            ("gate-enforce", '{"current": "x", "on": false}'),
+            ("gate-dns-token", '{"current": "x", "token": "abc"}'),
+            ("account-password", '{"current": "x", "new": "a-new-password-123"}'),
+            ("account-2fa-disable", '{"code": "123456"}'),
+            ("remote-wg-rotate", ""),
+            ("remote-egress-upload wireguard", "[Interface]"),
+            ("recover", ""),
+            ("reboot", ""),
+            ("service-set notifications on", ""),
+            ("driver-set '{\"nut\": {\"enabled\": true}}'", ""),
+            ("hardware-set '{}'", ""),
+        ]
+        for cmd, stdin in attempts:
+            status, out = router.execute(f"printf %s '{stdin}' | runuser -u guest -- helios-ctl {cmd} 2>&1")
+            print(f"guest: helios-ctl {cmd} -> exit {status}: {out.strip()[-200:]}")
+            assert '"ok": true' not in out, f"guest: helios-ctl {cmd} claims success: {out}"
+        time.sleep(3)
+        after = snapshot()
+        assert after == before, f"something changed for a non-admin:\n{before}\n---\n{after}"
   '';
 }

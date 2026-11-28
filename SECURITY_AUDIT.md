@@ -8,7 +8,7 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md). Don't open a public i
 
 | | |
 |---|---|
-| Last full audit | 2026-11 (PR #14); remote access re-audited 2026-11 (HA-23 to HA-26) |
+| Last full audit | 2026-11 (PR #14); remote access re-audited 2026-11 (HA-23 to HA-26); connection revocation, ICMP errors and authorization 2026-11 (HA-27 to HA-31) |
 | Scope | Every module in `modules/`, `pkgs/helios-ctl.py`, `pkgs/photosphere/`, `pkgs/logwatch.sh`, `installer/`, `flake.nix` / `flake.lock`, `.github/` |
 | Method | Static review of the generated configuration and execution paths (not the comments), plus runtime tests where possible: real kernel conntrack and nftables in network namespaces, NixOS VM tests, helios-ctl unit tests |
 | Not covered | Behaviour on physical hardware (see [Manual verification](#manual-verification)), third-party firmware on switches and access points, the security of Tailscale, Authelia, Caddy, Cockpit and nixpkgs themselves |
@@ -71,6 +71,13 @@ Status: **Fixed** = fixed and covered by a regression test. **Open** = known and
 | HA-24 | Info | Container accepted open connections before the kill switch (not reproducible: masquerade already stops them) | Hardened |
 | HA-25 | Low | Per-way-in home-network revocation relied on the container restarting | Fixed |
 | HA-26 | Info (functional) | Proxy egress sent replies for WireGuard / OpenVPN clients back into the tunnel | Fixed |
+| HA-27 | Medium | Open connections kept flowing the other way after a permission was taken away | Fixed (silent devices: see text) |
+| HA-28 | Medium | Forged ICMP errors crossed between networks | Fixed |
+| HA-29 | Info | OpenVPN's CRL was chowned by a fixed name in OpenVPN's folder | Fixed (hardening) |
+| HA-30 | Low (functional) | `helios-ctl reboot` claimed success when the reboot was refused | Fixed |
+| HA-31 | Info | Remote-access clients can reach each other through the container | Open (a decision) |
+| HA-32 | Info (functional) | WireGuard / OpenVPN ways in got no answers with a VPN way out | Fixed |
+| HA-33 | Info (functional) | The proxy way out never worked (host name mangled, tunnel never set up) | Fixed |
 
 ### HA-01: Source checks ran after connection tracking (High, Fixed)
 
@@ -256,6 +263,78 @@ Quarantine and pausing a device match by MAC. A device can copy a known MAC, or 
 - **Fix:** `lookup main suppress_prefixlength 0` at priority 190, as wg-quick does. This only lets specific main-table routes win, never the default route, so it doesn't weaken the kill switch.
 - **Test:** `tests/netns/heliosphere.py` prints what the old routing does ("INFO: proxy egress with tun2socks' old routing"), and its proxy-egress checks run with the fix.
 
+### HA-27: Open connections kept flowing the other way after a permission was taken away (Medium, Fixed)
+
+- **What:** since HA-03, the side that opened a connection is checked against the rules on every packet, but replies were accepted up front (`ct direction reply ct state established accept`, in `forward` and in the container). Taking a permission away stopped the client, not the server: the far end could keep sending on the open connection. With UDP it could do so indefinitely, since reply traffic keeps the conntrack entry alive. With TCP it could send at least one window of data, which the client's kernel delivers. The router's own answers (output) were never checked, so a network that lost admin access kept receiving its open SSH or Cockpit session's output.
+- **Measured** on main's rules (`tests/netns/firewall.py`, CI run 46092814400, job 140817466673). After the permission went, the server's next packet arrived over TCP and UDP for every kind of revocation tested:
+  - another network's reach (family to iot),
+  - a network's internet (iot),
+  - admin access (iot),
+  - a device forgotten and so quarantined,
+  - a device paused, over IPv6 (paused by MAC).
+
+  That's 10 failing checks. IPv4 pause was already cut both ways (`ip daddr @cutoff drop`).
+- **Attacker:** whoever is on the far side of a connection that was open when the permission went. For example, a compromised camera's command server keeps sending commands to it after its internet is turned off, or an IoT device keeps feeding data into a family device after the family network loses its reach to IoT.
+- **Fix:** `modules/heliopause.nix` ("revocation"), the container's forward chain in `modules/heliosphere.nix`.
+  - **Tags:** every accepting rule tags its connection with a hash of its own text (`ct mark set 0x8…`).
+  - **Replies:** they pass only while their tag is one of the current ruleset's. An Apply that drops a rule therefore stops the other side at once, and connections whose rule didn't change keep their tag and are untouched.
+  - **The opening side:** each of its packets is first marked "revoked" (0x7fffffff), then re-tagged by whichever rule still allows it.
+  - **The router's answers:** a new output check drops them on connections the router may no longer accept.
+  - **Per-destination rules:** rules that named only a source interface (reach "all", Tailscale) are now one rule per destination interface, plus one for the rest, so each pair has its own tag.
+- **Still open:** a change no rule text shows can only take effect when the device sends something. These are a device forgotten (only the known-device set changes) and a device paused by MAC on IPv6 (only a live set changes; the router doesn't know the device's IPv6 addresses). A device that stays completely silent keeps receiving on connections it already had. UDP push to a silent device is the only realistic case. A removed UPnP mapping still doesn't end connections already open through it (its rule doesn't change). Connections open before this change carry no tag (mark 0) and are treated as before until their client sends a packet.
+- **Tests:**
+  - `tests/netns/firewall.py` loads the real generated rulesets (`tests/netns/rulesets.nix`, `nix build .#heliopauseRulesets`) into namespaces. For each kind of revocation it checks both directions, the server first, then that the permission given back allows new connections. It also checks that an unrelated change leaves an open connection alone in both directions.
+  - `tests/netns/heliosphere.py`: each way in loses a home network while another keeps it, and the home server pushes first (the model of the container's rules: old, #15, new).
+  - `tests/vm/hardening.nix` asserts the order in the real container ruleset.
+
+### HA-28: Forged ICMP errors crossed between networks (Medium, Fixed)
+
+- **What:** `ct state related accept` came before every policy rule, on the host and in the container. Conntrack decides "related" from the header an ICMP error quotes, not from where the error comes from. Linux checks only that the outer destination matches the connection. So a device on any network could send an ICMP error, quoting another network's open connection, to that connection's own endpoint, and it was forwarded across the isolation.
+  - Over IPv4 the endpoint can even be the router's WAN address: NAT then hands the error to the inside host.
+  - Over IPv6 the attacker aims straight at the host.
+- **Measured** on main's rules (same run). All three passed when they shouldn't have:
+  - iot into trusted's internet flow (IPv4, through NAT),
+  - family into trusted's internet flow (IPv6),
+  - family into trusted's flow to iot (IPv4).
+- **Attacker:** any device on any network, including guest and IoT, that knows or can guess a victim connection's addresses and ports. Through NAT that's the WAN port: about 28,000 guesses, each a single packet. **Impact:**
+  - ICMP "port unreachable" ends a victim's UDP sessions (DNS, QUIC, calls, games).
+  - "Fragmentation needed" lowers its path MTU.
+  - The packet itself is traffic that isolation should have stopped.
+- **Fix:** related packets now need the parent connection's tag and its interface pair, either way round (`ct mark . iifname . oifname`); anything else related is dropped. The router's own connections are tagged by the interface they leave on (output chain), so errors to the router are checked the same way. The container checks the same way, with internet connections tagged per way in.
+- **Tests:** `tests/netns/firewall.py` (`related`) forges all three variants, and checks that real errors (from the internet, and from iot about trusted's flow to it) still arrive.
+
+### HA-29: OpenVPN's CRL chowned by a fixed name (Info, Fixed)
+
+`hs_gen_crl` had `openssl` write `crl.pem.tmp` into `/var/lib/heliosphere/openvpn/server`, a folder owned by OpenVPN's account (uid 1194). It then chowned and replaced that file by name: the HA-04 pattern. It wasn't exploitable: no host process runs as uid 1194, and the container mounts the folder read-only. The CRL is now built in the CA's root-only folder and handed over with `hs_write`, which chowns by file descriptor. The real-OpenSSL unit test covers its mode and contents.
+
+### HA-30: `helios-ctl reboot` claimed success when refused (Low, functional, Fixed)
+
+`cmd_reboot` ignored `systemctl reboot`'s exit status, so an account polkit refuses (anyone but root) got `{"ok": true}`. It now reports the refusal, and sends the "rebooting" notification only once systemd has accepted. Test: `test_maintenance_and_reboot` (a refused reboot), and the non-admin VM subtest (below).
+
+### HA-31: Remote-access clients can reach each other (Info, Open)
+
+The container forwards between its ways in (WireGuard, OpenVPN, Tailscale) and between clients on the same way in. `docs/heliosphere.md` says clients can't reach home, which holds, but says nothing about each other. That suits one owner's phone and laptop; it doesn't suit giving remote access to guests. If clients should be isolated from each other, add `oifname { <client interfaces> } drop` before the internet rules in the container's forward chain. Not changed here: it's a policy decision.
+
+### HA-32: WireGuard and OpenVPN ways in got no answers with a VPN way out (Info, functional, Fixed)
+
+Found by `tests/vm/killswitch.nix`. The container answered the phone's WireGuard handshake, but the answer went into the egress tunnel. Answers to connections that came in on eth0 were routed by `fwmark 0x1 lookup main` at priority 90, and there were two problems:
+- wg-quick adds its rules without a priority, and the kernel then puts them in front of every existing rule (78/79), ahead of 90.
+- With an OpenVPN way out, `main` itself holds the `redirect-gateway` routes.
+
+Not a leak: the kill switch held, so the answers went nowhere. But remote access over WireGuard or OpenVPN didn't work with a VPN way out. Fix (`modules/heliosphere.nix`):
+- The answers have a table of their own (90: default via the host).
+- wg-quick's rules are moved to 190/200 once it's up.
+
+Test: the kill-switch VM test connects the phone over WireGuard with each way out.
+
+### HA-33: The proxy way out never worked (Info, functional, Fixed)
+
+Found by `tests/vm/killswitch.nix`. There were two problems in `helios-egress-proxy` (`modules/heliosphere.nix`):
+- **The proxy address was mangled.** `-proxy "socks5://$creds<host>:<port>"`: bash read `$creds` plus the start of the host name as one, empty, variable. A host of `192.0.2.1` became `.0.2.1`, and the same happens to any host name.
+- **The tunnel was never set up.** tun2socks runs `-tun-post-up` without a shell, so the `;`-joined commands failed: tun-out stayed down, with no address, route or rules.
+
+The kill switch held, so client traffic went nowhere and nothing leaked. Fixed with `''${creds}`, and a script file for post-up that also replaces its rules instead of adding duplicates. Test: the kill-switch VM test's SOCKS5 run.
+
 ## Verified by design
 
 These were checked in the 2026-11 audit and found sound. Re-check the relevant row when you change the code it names.
@@ -281,7 +360,10 @@ These were checked in the 2026-11 audit and found sound. Re-check the relevant r
 | Test | Runs | Covers |
 |---|---|---|
 | `tests/netns/conntrack.py` | CI as root (all checks). Rootless anywhere with user namespaces (input checks only). | HA-01, HA-02, HA-03, plus legitimate traffic, NAT, and a connection kept open across a reload. It runs the old and new chain orderings side by side. |
-| `tests/netns/heliosphere.py` | CI as root. Rootless: `HELIOS_NETNS_DRY=1` only builds the namespaces and loads every ruleset. | HA-23 to HA-26: kill switch for each way out and each failure mode, per-way-in revocation, IPv6, DNS redirect and DoT/DoH blocking for every way in, host reachability, replies, recovery. It runs the old and new container orderings side by side. |
+| `tests/netns/heliosphere.py` | CI as root. Rootless: `HELIOS_NETNS_DRY=1` only builds the namespaces and loads every ruleset. | HA-23 to HA-27: kill switch for each way out and each failure mode, per-way-in revocation in both directions (the home server pushes first), IPv6, DNS redirect and DoT/DoH blocking for every way in, host reachability, replies, recovery. It runs the container's old, #15 and current orderings side by side (a model). |
+| `tests/netns/firewall.py` | CI as root, on the **real** rulesets (`nix build .#heliopauseRulesets`) | HA-27, HA-28 on the host: both directions of revocation (reach, internet, admin, quarantine, pause v4/v6), forged ICMP errors (IPv4 through NAT, IPv6, between networks) and real ones, an unrelated reload, spoofing |
+| `tests/vm/killswitch.nix` | CI (`nix build .#vmTests.killswitch`) | HA-24 end to end: WireGuard, OpenVPN and SOCKS5 ways out stopped mid-session with TCP and UDP running; tcpdump on the router's WAN; a kill-switch-off control; new connections and DNS during the outage; recovery; routing rules unchanged across restarts |
+| `tests/vm/hardening.nix` (non-admin subtest) | CI | An account outside wheel runs the privileged helios-ctl commands; credentials, keys, the gate and the boot are unchanged (docs/authorization.md) |
 | `tests/vm/router.nix` | CI (`nix build .#vmTests.router`) | HA-01, HA-03 on the real generated ruleset; isolation; SSH only from admin networks |
 | `tests/vm/hardening.nix` | CI | HA-06; MAC-based pausing; the gate; TOTP; recovery codes; service accounts |
 | `tests/vm/passkey.nix` | CI | WebAuthn passkey at the gate |
@@ -299,7 +381,7 @@ These can't be tested in CI. Check them on real hardware after a security-releva
 3. **UPnP:** a mapping requested from a `upnp` network works from the WAN, and stops once it's removed (HA-07).
 4. **Rescue port with the gate on:** a laptop on the rescue port gets Cockpit with the password only. A device on any other network can't (HA-01, HA-06).
 5. **Tailnet:** the tailnet policy from the template is applied, and a node that isn't an admin can't reach the router (HA-20).
-6. **Remote access kill switch with a real provider:** with a WireGuard, OpenVPN and proxy way out in turn, keep a client streaming, then stop the tunnel (`systemctl stop wg-quick-wg-out` / `openvpn-egress` / `helios-egress-proxy` inside the container), and restart OpenVPN with the provider's own `persist-tun`. Nothing from the client may appear on the router's WAN (`tcpdump -ni wan host <client's destination>`), and traffic resumes through the tunnel once it's back (HA-24).
+6. **Remote access kill switch with a real provider** (the VM test covers it against test tunnels, not a provider's): with a WireGuard, OpenVPN and proxy way out in turn, keep a client streaming, then stop the tunnel (`systemctl stop wg-quick-wg-out` / `openvpn-egress` / `helios-egress-proxy` inside the container), and restart OpenVPN with the provider's own `persist-tun`. Nothing from the client may appear on the router's WAN (`tcpdump -ni wan host <client's destination>`), and traffic resumes through the tunnel once it's back (HA-24).
 7. **Remote access IPv6:** a Tailscale exit-node client with a way out that has IPv6 gets no IPv6 through Heliosphere, and its DNS still goes through Magnetosphere (HA-23).
 
 ## Keeping this file current

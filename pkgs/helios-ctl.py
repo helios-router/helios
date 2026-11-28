@@ -1177,8 +1177,10 @@ def cmd_reboot(a):
     """Reboot now (from Photosphere) — refused while a change is being applied/confirmed."""
     if _apply_busy():
         fail("a change is being applied: confirm or roll it back first")
+    r = run(["systemctl", "reboot", "--no-block"], timeout=15)
+    if r.returncode != 0:
+        fail(f"reboot refused: {(r.stderr or '').strip()[:200] or 'systemctl failed'}")
     notify("aurora", "Rebooting", "The router is restarting now" + (f" to run kernel {reboot_status()['installed']}." if reboot_status()["needed"] else "."))
-    run(["systemctl", "reboot", "--no-block"], timeout=15)
     out({"ok": True})
 
 
@@ -3934,10 +3936,15 @@ def hs_gen_crl():
     """OpenVPN re-reads the CRL after dropping privileges, so it's 0400 and HS_OVPN_USER's (built
     beside the live one and swapped in, so a handshake never sees a half-written CRL)."""
     crl = hs_path("openvpn", "server", "crl.pem")
-    hs_ca("-gencrl", "-out", crl + ".tmp")
-    os.chmod(crl + ".tmp", 0o400)
-    give_to(crl + ".tmp", HS_OVPN_USER)
-    os.replace(crl + ".tmp", crl)
+    # Built in the CA's root-only folder, then handed over by descriptor (hs_write):
+    # never a fixed name in the folder OpenVPN's account owns
+    new = hs_ca_dir("crl.new")
+    hs_ca("-gencrl", "-out", new)
+    try:
+        with open(new) as f:
+            hs_write(crl, f.read(), 0o400, 0o700, HS_OVPN_USER)
+    finally:
+        os.unlink(new)
 
 
 def hs_pki_init():

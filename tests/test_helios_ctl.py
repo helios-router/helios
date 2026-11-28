@@ -570,6 +570,11 @@ class HeliosCtl(unittest.TestCase):
         write_json(os.path.join(self.data, "apply.json"), {})
         self.assertEqual(self.helios("reboot-window")["action"], "reboot")
         self.assertIn("systemctl reboot --no-block", self.stub_log())
+        # A refused reboot (polkit: not an admin) is reported, not claimed done
+        env = dict(self.env, STUB_REBOOT_DENIED="1")
+        r = json.loads(subprocess.run([sys.executable, CTL, "reboot"], capture_output=True, text=True, env=env).stdout)
+        self.assertFalse(r["ok"])
+        self.assertIn("reboot refused", r["error"])
 
     def test_restrict_unnamed_devices(self):
         r = self.helios("devices")

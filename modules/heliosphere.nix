@@ -34,6 +34,26 @@ let
   ingressIf = { tailscale = "tailscale0"; wireguard = "wg-in"; openvpn = "tun-in"; };
   lanAny = lib.unique (lib.concatMap lanOf [ "tailscale" "wireguard" "openvpn" ]);
   allLans = map netOf cfg.internal.names;
+  # Connection tags, as in heliopause.nix ("revocation"): every accepting rule
+  # tags its connections; replies pass only while that rule is still here, and
+  # ICMP errors only along the connection's path
+  tagOf = text: "0x8" + builtins.substring 0 7 (builtins.hashString "sha256" text);
+  revoked = "0x7fffffff";
+  clientIfs = map (m: ingressIf.${m}) (builtins.filter (m: R.${m}.enabled) [ "tailscale" "wireguard" "openvpn" ]);
+  upstreams = [ "eth0" ] ++ lib.optional tunnel tunIf;
+  lanRules = lib.concatMap (m: map (l: rec {
+    iif = ingressIf.${m};
+    tag = tagOf "lan ${iif} ${l}";
+    line = ''iifname "${iif}" ip daddr ${l} ct mark set ${tag} accept'';
+    paths = [ ''${tag} . "eth0" . "${iif}"'' ''${tag} . "${iif}" . "eth0"'' ];
+  }) (lanOf m)) [ "tailscale" "wireguard" "openvpn" ];
+  netRules = map (c: rec {
+    tag = tagOf "internet ${c}";
+    line = ''iifname "${c}" ct mark set ${tag} accept'';
+    paths = lib.concatMap (u: [ ''${tag} . "${u}" . "${c}"'' ''${tag} . "${c}" . "${u}"'' ]) upstreams;
+  }) clientIfs;
+  hsTags = map (r: r.tag) (lanRules ++ netRules);
+  hsPaths = lib.concatMap (r: r.paths) (lanRules ++ netRules);
   # OpenVPN's own account, fixed uid/gid so host and container agree on who owns crl.pem
   ovpnId = 1194;
   ovpnUser = { isSystemUser = true; uid = ovpnId; group = "heliosphere-ovpn"; };
@@ -201,7 +221,23 @@ lib.mkIf (cfg.internal.on "remote") {
       networking.wg-quick.interfaces.wg-out = lib.mkIf (eg.mode == "wireguard") {
         configFile = "${dir}/egress/wg-out.conf";
       };
-      systemd.services.wg-quick-wg-out = lib.mkIf (eg.mode == "wireguard") { unitConfig.ConditionPathExists = "${dir}/egress/wg-out.conf"; };
+      systemd.services.wg-quick-wg-out = lib.mkIf (eg.mode == "wireguard") {
+        unitConfig.ConditionPathExists = "${dir}/egress/wg-out.conf";
+        # wg-quick adds its two rules without a priority, so the kernel puts them in
+        # front of every other rule, ahead of policy routing's 80-90 (replies to
+        # incoming connections would go into the tunnel). Move them behind, where
+        # tun2socks keeps its own.
+        serviceConfig.ExecStartPost = "${pkgs.writeShellScript "wg-out-rules" ''
+          for f in -4 -6; do
+            if ${ip} $f rule del lookup main suppress_prefixlength 0 2>/dev/null; then
+              ${ip} $f rule add lookup main suppress_prefixlength 0 priority 190
+            fi
+            if ${ip} $f rule del not fwmark 51820 lookup 51820 2>/dev/null; then
+              ${ip} $f rule add not fwmark 51820 lookup 51820 priority 200
+            fi
+          done
+        ''}";
+      };
 
       systemd.services.helios-egress-proxy = lib.mkIf (eg.mode == "proxy") {
         description = "Remote access: all traffic through the upstream proxy";
@@ -221,8 +257,17 @@ lib.mkIf (cfg.internal.on "remote") {
             [ -n "$u" ] && creds="$u:$p@"
           fi
           exec ${pkgs.tun2socks}/bin/tun2socks -device tun://tun-out -interface eth0 -fwmark 2 \
-            -proxy "${eg.proxy.type or "socks5"}://$creds${eg.proxy.host or ""}:${toString (eg.proxy.port or 1080)}" \
-            -tun-post-up "ip addr add 198.18.0.1/15 dev tun-out; ip link set tun-out up; ip route replace default dev tun-out table 100; ip rule add lookup main suppress_prefixlength 0 priority 190 2>/dev/null || true; ip rule add not fwmark 0x2 table 100 priority 200 2>/dev/null || true"
+            -proxy "${eg.proxy.type or "socks5"}://''${creds}${eg.proxy.host or ""}:${toString (eg.proxy.port or 1080)}" \
+            -tun-post-up ${pkgs.writeShellScript "tun-out-up" ''
+              # tun2socks runs this without a shell, so it's a script of its own
+              ${ip} addr replace 198.18.0.1/15 dev tun-out
+              ${ip} link set tun-out up
+              ${ip} route replace default dev tun-out table 100
+              ${ip} rule del priority 190 2>/dev/null || true
+              ${ip} rule add lookup main suppress_prefixlength 0 priority 190
+              ${ip} rule del priority 200 2>/dev/null || true
+              ${ip} rule add not fwmark 0x2 table 100 priority 200
+            ''}
         '';
       };
 
@@ -237,7 +282,18 @@ lib.mkIf (cfg.internal.on "remote") {
           ${ip} rule del priority 80 2>/dev/null || true
           ${ip} rule del priority 90 2>/dev/null || true
           ${ip} rule add to 10.60.0.0/24 lookup main priority 80
-          ${ip} rule add fwmark 0x1 lookup main priority 90
+          # Replies to connections that came in on eth0 (WireGuard / OpenVPN transport,
+          # proxy users) go back via the host, in a table of their own: "main" holds
+          # OpenVPN's redirect-gateway routes when that's the way out
+          ${ip} route replace default via ${hostIp} dev eth0 table 90
+          ${ip} rule add fwmark 0x1 lookup 90 priority 90
+          # ...also by their listening port: kernel WireGuard sends from its own
+          # socket, which the conntrack mark above doesn't reach
+          while ${ip} rule del priority 88 2>/dev/null; do :; done
+          ${lib.concatMapStrings (p: "${ip} rule add ipproto ${p.proto} sport ${toString p.port} lookup 90 priority 88\n")
+            (lib.optional R.wireguard.enabled { proto = "udp"; port = R.wireguard.port; }
+             ++ lib.optional R.openvpn.enabled { proto = R.openvpn.proto; port = R.openvpn.port; }
+             ++ lib.optionals R.proxy.enabled [ { proto = "tcp"; port = R.proxy.socksPort; } { proto = "tcp"; port = R.proxy.httpPort; } ])}
           # Home networks some way in may reach stay on the main table, past any tunnel
           ${lib.concatMapStrings (n: "${ip} rule del to ${n} priority 85 2>/dev/null || true
 ${ip} rule add to ${n} lookup main priority 85
@@ -274,24 +330,33 @@ ${ip} rule add to ${n} lookup main priority 85
               # IPv6 too, but it can't see inside a tunnel). Clients fall back to IPv4.
               meta nfproto ipv6 reject with icmpx admin-prohibited
               ct state invalid drop
-              # Replies pass. The side that opened a connection goes through the rules
-              # below on every packet, like Heliopause on the host. Taking a home
-              # network away from one way in cuts that way's open connections even
-              # while another way in keeps it, and when a tunnel goes away, open
-              # connections hit the kill switch rather than leaving through eth0.
-              # Related packets (ICMP errors) aren't exempt either.
-              ct direction reply ct state established accept
+              # The side that opened a connection goes through the rules below on
+              # every packet, like Heliopause on the host, and replies pass only while
+              # the rule that allowed the connection is still here. Taking a home
+              # network away from one way in cuts that way's open connections, both
+              # ways, even while another way in keeps it; when a tunnel goes away,
+              # open connections hit the kill switch rather than leaving through eth0.
+              # ICMP errors only along their connection's path.
+              ${lib.optionalString (hsPaths != [ ]) "ct state related ct mark . iifname . oifname { ${lib.concatStringsSep ", " hsPaths} } accept"}
+              ct state related drop
+              ct direction reply ct state established ct mark { ${lib.concatStringsSep ", " ([ "0x0" ] ++ hsTags)} } accept
+              ct direction original ct mark set ${revoked}
+              # Nothing at home opens connections to remote clients: from home
+              # networks, only the replies above
+              iifname "eth0" ip saddr { ${lib.concatStringsSep ", " allLans} } drop
               # The host can't see inside a tunnel, so the DNS bypass blocks happen here too
               meta l4proto { tcp, udp } th dport 853 reject
               ip daddr @doh_v4 reject
               ip daddr @warp_v4 reject
               udp dport 2408 reject
               # Home networks: only the ways in that were allowed, only the networks chosen
-              ${lib.concatMapStrings (m: lib.optionalString (lanOf m != [ ]) "iifname \"${ingressIf.${m}}\" ip daddr { ${lib.concatStringsSep ", " (lanOf m)} } accept
-              ") [ "tailscale" "wireguard" "openvpn" ]}ip daddr { ${lib.concatStringsSep ", " allLans} } drop
+              ${lib.concatMapStringsSep "\n              " (r: r.line) lanRules}
+              ip daddr { ${lib.concatStringsSep ", " allLans} } drop
               ${lib.optionalString (tunnel && eg.killswitch) ''
               # Kill switch: client traffic goes into the tunnel or nowhere
               oifname "eth0" ip daddr != ${hostIp} drop''}
+              # The internet, for each way in
+              ${lib.concatMapStringsSep "\n              " (r: r.line) netRules}
             }
 
             chain output {

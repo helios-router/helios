@@ -101,8 +101,11 @@ let common = import ./common.nix; in
         time.sleep(1)
         trusted.succeed(f"(timeout 30 python3 -u -c 'import socket,time\ns=socket.create_connection((\"{iot_ip}\",7000)); s.sendall(b\"before\\n\")\nwhile not __import__(\"os\").path.exists(\"/tmp/go\"): time.sleep(0.1)\ns.sendall(b\"after\\n\"); time.sleep(3)' >/dev/null 2>&1 &)")
         iot.wait_until_succeeds("grep -q before /tmp/tcp.log", timeout=15)
-        handle = router.succeed("nft -a list chain inet heliopause forward | grep 'iifname \"trusted\" accept' | sed 's/.*# handle //'").strip()
-        router.succeed(f"nft delete rule inet heliopause forward handle {handle}")
+        # trusted's reach is one tagged rule per destination plus one for the rest
+        handles = router.succeed("nft -a list chain inet heliopause forward | grep '^\\s*iifname \"trusted\" .*accept' | sed 's/.*# handle //'").split()
+        assert handles, "trusted's reach rules not found"
+        for handle in handles:
+            router.succeed(f"nft delete rule inet heliopause forward handle {handle}")
         trusted.succeed("touch /tmp/go")
         time.sleep(3)
         assert "after" not in iot.succeed("cat /tmp/tcp.log"), "an open connection outlived the permission that allowed it"

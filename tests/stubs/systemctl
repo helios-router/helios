@@ -1,5 +1,8 @@
 #!/bin/sh
 echo "systemctl $*" >> "$STUB_LOG"
+if [ "$1" = reboot ] && [ -n "${STUB_REBOOT_DENIED:-}" ]; then
+  echo "Call to Reboot failed: Access denied" >&2; exit 1
+fi
 if [ "$1" = show ]; then
   shift; while [ "$1" != "${1#-}" ] || [ "$1" = "Id,ActiveState,SubState,LoadState" ]; do shift; done
   for u in "$@"; do

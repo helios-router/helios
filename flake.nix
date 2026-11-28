@@ -60,7 +60,11 @@
       };
 
       nixosConfigurations = { inherit example; } // lib.optionalAttrs impure { inherit installer; };
-      legacyPackages.${system}.vmTests = import ./tests/vm { inherit self installerArgs; pkgs = nixpkgs.legacyPackages.${system}; };
+      legacyPackages.${system} = {
+        vmTests = import ./tests/vm { inherit self installerArgs; pkgs = nixpkgs.legacyPackages.${system}; };
+        # The real firewall rulesets tests/netns/firewall.py loads into namespaces
+        heliopauseRulesets = import ./tests/netns/rulesets.nix { inherit lib example; pkgs = nixpkgs.legacyPackages.${system}; };
+      };
       packages.${system} = {
         installer-iso = if impure then installer.config.system.build.isoImage else needsImpure;
         default = self.packages.${system}.installer-iso;
