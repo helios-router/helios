@@ -109,7 +109,7 @@ def veth(a, a_if, b, b_if):
 
 
 def up(name, iface, *addrs):
-    run = (lambda c: sh(c)) if name == "C" else (lambda c: ns(name, c))
+    run = sh if name == "C" else (lambda c: ns(name, c))
     for a in addrs:
         run(f"ip {'-6 ' if ':' in a else ''}addr add {a} dev {iface}" + (" nodad" if ":" in a else ""))
     run(f"ip link set {iface} up")
@@ -266,6 +266,17 @@ def load(rules, where="C"):
     write_file(path, rules)
     if where == "C":
         sh(f"nft -f {path}")
+        # An observer in its own table (it only counts, never decides): client
+        # internet traffic that leaves the container through eth0
+        write_file(path + ".observe", """table inet observe {
+  counter out_eth0 { }
+  chain post {
+    type filter hook postrouting priority 300; policy accept;
+    oifname "eth0" ip daddr != { 10.60.0.0/24, 10.20.0.0/24, 10.30.0.0/24 } counter name out_eth0
+  }
+}
+""")
+        sh(f"nft -f {path}.observe")
     else:
         sh(f"nsenter -t {children[where].pid} -n nft -f {path}")
 
@@ -302,8 +313,14 @@ table inet heliopause-nat {{
 
 
 def leaked():
-    """Client internet packets that came out of the container's eth0 so far."""
+    """Client internet packets the host saw arrive from the container so far."""
     out = sh(f"nsenter -t {children['H'].pid} -n nft list counter inet heliopause leak")
+    return int(out.split("packets")[1].split()[0])
+
+
+def left_eth0():
+    """Client internet packets the container sent out of eth0 since its rules loaded."""
+    out = sh("nft list counter inet observe out_eth0")
     return int(out.split("packets")[1].split()[0])
 
 
@@ -417,7 +434,7 @@ def run_egress(order, mode):
         t = Client("W", NET, 7000, "tcp").say("t-before")
         res[f"legit: {how}: UDP through the tunnel"] = seen(udp, "u-before") == {tun_src}
         res[f"legit: {how}: TCP through the tunnel, replies come back"] = seen(tcp, "t-before") == {tun_src} and t.acks() >= 1
-        base = leaked()
+        base, base_c = leaked(), left_eth0()
         if how == "route":
             tunnel_routes(mode, add=False)      # routes gone, device still there
         else:
@@ -427,7 +444,17 @@ def run_egress(order, mode):
         t.say("t-during")
         Client("W", NET, 9000, "udp").say("u-new-during")
         Client("W", NET, 7000, "tcp").say("t-new-during")
-        res[f"deny: {how}: open or new connections leave through eth0 when the tunnel goes"] = leaked() == base
+        res[f"deny: {how}: open or new connections leave through eth0 when the tunnel goes"] = \
+            leaked() == base and left_eth0() == base_c
+        if how == "route":
+            # Control: with the kill switch off the same outage does send traffic out
+            # of eth0, so the counters above can see a leak when there is one
+            load(container_rules(order, allow, mode, killswitch=False))
+            c0, h0 = left_eth0(), leaked()
+            Client("W", NET, 9000, "udp").say("u-control")
+            res[f"legit: {how}: (control) with the kill switch off, the counters see traffic outside the tunnel"] = \
+                left_eth0() > c0 and leaked() > h0 and "192.0.2.254" in seen(udp, "u-control")
+            load(container_rules(order, allow, mode))
         res[f"deny: {how}: nothing reaches the internet outside the tunnel"] = not (
             seen(udp, "u-during") | seen(tcp, "t-during") | seen(udp, "u-new-during") | seen(tcp, "t-new-during")) - {tun_src}
         # DNS keeps working (through the router), the host stays reachable
