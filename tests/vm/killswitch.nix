@@ -302,7 +302,13 @@ in
         assert container("ip rule") == rules, f"{mode}: routing rules changed across restarts:\n{rules}\n---\n{container('ip rule')}"
 
     def switch(spec):
-        router.succeed(f"/run/booted-system/specialisation/{spec}/bin/switch-to-configuration test", timeout=600)
+        status, out = router.execute(f"/run/booted-system/specialisation/{spec}/bin/switch-to-configuration test 2>&1", timeout=600)
+        # avahi-daemon sometimes trips on its own PID file when restarted mid-switch;
+        # anything else failing is a real failure
+        failed = router.succeed("systemctl list-units --state=failed --plain --no-legend | awk '{print $1}'").split()
+        assert status == 0 or (status == 4 and set(failed) <= {"avahi-daemon.service"}), f"switch to {spec}: {status} {failed}\n{out[-2000:]}"
+        if failed:
+            router.succeed("systemctl reset-failed; systemctl restart avahi-daemon.service")
         router.wait_for_unit("container@heliosphere.service", timeout=300)
         remote.wait_until_succeeds("ping -c 1 -W 2 10.61.0.1", timeout=120)
 
