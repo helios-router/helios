@@ -4917,7 +4917,9 @@ def cmd_gate_enforce(a):
         fail("Copy the admin password to the gate first")
     if not gate_passkeys(user) and not gate_has_totp(user):
         fail("Register a passkey (recommended) or a code first")
-    write_private(GATE_FLAG, f"{now()}\n")   # Caddy only checks it exists (the folder is root:caddy 0750)
+    # 0640 root:caddy (chown below): Caddy's file matcher must be able to READ it.
+    # Unreadable, Caddy treats it as absent and the gate fails open (tests/vm/passkey.nix)
+    write_private(GATE_FLAG, f"{now()}\n", 0o640)
     if os.geteuid() == 0:
         try:
             os.chown(GATE_FLAG, 0, pwd.getpwnam("caddy").pw_gid)

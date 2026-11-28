@@ -285,7 +285,7 @@ in
         g = ctl("gate")
         assert g["synced"] and g["totp"] and not g["enforced"], g
         assert ctl("gate-enforce", json.dumps({"current": pw, "on": True}))["enforced"]
-        assert owner_mode("/var/lib/helios-gate/enforced") == "600 root"   # Caddy only stats it
+        assert owner_mode("/var/lib/helios-gate/enforced") == "640 root"   # group caddy must read it, or the gate fails open
 
         # Required: no session, no Cockpit
         code, where = curl("/")
